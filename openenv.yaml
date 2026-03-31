@@ -1,0 +1,25 @@
+name: finance-ops-openenv
+version: "1.0.0"
+description: "OpenEnv-compatible finance operations environment for invoice extraction, invoice validation, and PO reconciliation."
+entrypoint: "env.environment:FinanceOpsEnv"
+tags:
+  - openenv
+  - finance
+  - invoice-processing
+  - reconciliation
+tasks:
+  - id: invoice_extract_easy
+    difficulty: easy
+    description: "Extract five required fields from a clean SMB invoice."
+    grader: "env.tasks.easy:grade_easy_submission"
+    reward_range: [-1.0, 1.0]
+  - id: invoice_validate_medium
+    difficulty: medium
+    description: "Flag anomalies in a faulty invoice with partial credit and false-positive penalties."
+    grader: "env.tasks.medium:grade_medium_submission"
+    reward_range: [-1.0, 1.0]
+  - id: po_reconcile_hard
+    difficulty: hard
+    description: "Match invoices to purchase orders and flag unmatched invoices."
+    grader: "env.tasks.hard:grade_hard_submission"
+    reward_range: [-1.0, 1.0]
