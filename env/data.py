@@ -54,7 +54,7 @@ TASKS = {
                 "- Machine Parts A x2 @ 4500.00 = 9000.00\n"
                 "- Machine Parts A x2 @ 4500.00 = 9000.00\n"
                 "- Site Visit Fee x1 @ 2500.00 = 2500.00\n"
-                "Subtotal: 20500.00\n"
+                "Subtotal: 21500.00\n"
                 "Tax: 3690.00\n"
                 "Total Amount: 23000.00\n"
                 "GSTIN: MISSING\n"
@@ -98,6 +98,10 @@ TASKS = {
             "required_outputs": [
                 "matches",
                 "flag_unmatched_invoice",
+                "flag_amount_discrepancy",
+            ],
+            "known_issue_catalog": [
+                "amount_mismatch",
             ],
         },
         "ground_truth": {

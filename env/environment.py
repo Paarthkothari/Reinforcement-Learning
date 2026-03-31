@@ -18,6 +18,7 @@ class FinanceOpsEnv:
         self.flagged_issues: set[str] = set()
         self.matches: Dict[str, str] = {}
         self.unmatched_invoices: set[str] = set()
+        self.flagged_discrepancies: set[str] = set()
         self.action_history: list[Dict[str, Any]] = []
         self.last_reward: Optional[Reward] = None
 
@@ -34,6 +35,7 @@ class FinanceOpsEnv:
         self.flagged_issues = set()
         self.matches = {}
         self.unmatched_invoices = set()
+        self.flagged_discrepancies = set()
         self.action_history = []
         self.last_reward = None
         return self._make_observation()
@@ -78,6 +80,7 @@ class FinanceOpsEnv:
             "flagged_issues": sorted(self.flagged_issues),
             "matches": deepcopy(self.matches),
             "unmatched_invoices": sorted(self.unmatched_invoices),
+            "flagged_discrepancies": sorted(self.flagged_discrepancies),
             "last_reward": self.last_reward.model_dump() if self.last_reward else None,
             "action_history": deepcopy(self.action_history),
         }
@@ -98,6 +101,7 @@ class FinanceOpsEnv:
         elif task_type == "reconciliation":
             content["current_matches"] = deepcopy(self.matches)
             content["current_unmatched_invoices"] = sorted(self.unmatched_invoices)
+            content["current_flagged_discrepancies"] = sorted(self.flagged_discrepancies)
 
         return Observation(
             task_id=self.current_task["task_id"],
@@ -166,6 +170,29 @@ class FinanceOpsEnv:
                 return Reward(score=-0.1, reason="Flag action needs invoice_id for reconciliation.", partial_credit=0.0)
 
             true_unmatched = set(self.current_task["ground_truth"]["unmatched_invoices"])
+            true_discrepancies = set(self.current_task["ground_truth"].get("discrepancies", {}).keys())
+
+            if action.issue_code == "amount_mismatch":
+                if action.invoice_id in self.flagged_discrepancies:
+                    return Reward(
+                        score=-0.03,
+                        reason=f"Invoice '{action.invoice_id}' discrepancy was already flagged.",
+                        partial_credit=0.0,
+                    )
+
+                self.flagged_discrepancies.add(action.invoice_id)
+                if action.invoice_id in true_discrepancies:
+                    return Reward(
+                        score=0.14,
+                        reason=f"Correctly flagged amount mismatch for '{action.invoice_id}'.",
+                        partial_credit=0.14,
+                    )
+                return Reward(
+                    score=-0.06,
+                    reason=f"Invoice '{action.invoice_id}' does not have a reportable amount mismatch.",
+                    partial_credit=0.0,
+                )
+
             if action.invoice_id in self.unmatched_invoices:
                 return Reward(score=-0.03, reason=f"Invoice '{action.invoice_id}' was already flagged.", partial_credit=0.0)
 
@@ -213,6 +240,8 @@ class FinanceOpsEnv:
         return grade_hard_submission(
             self.matches,
             self.unmatched_invoices,
+            self.flagged_discrepancies,
             self.current_task["ground_truth"]["matches"],
             self.current_task["ground_truth"]["unmatched_invoices"],
+            self.current_task["ground_truth"].get("discrepancies", {}),
         )

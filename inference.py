@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from datetime import datetime
 from typing import Dict, List
 
 from openai import OpenAI
@@ -26,17 +28,14 @@ Choose a single next action based on the current observation."""
 
 
 def build_client() -> OpenAI:
-    api_key = (
-        os.getenv("GROQ_API_KEY")
-        or os.getenv("OPENAI_API_KEY")
-        or os.getenv("HF_TOKEN")
-    )
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("Set GROQ_API_KEY, OPENAI_API_KEY, or HF_TOKEN before running inference.py")
+        raise RuntimeError("Set OPENAI_API_KEY before running inference.py")
 
-    base_url = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
-
-    return OpenAI(api_key=api_key, base_url=base_url)
+    base_url = os.getenv("API_BASE_URL")
+    if base_url:
+        return OpenAI(api_key=api_key, base_url=base_url)
+    return OpenAI(api_key=api_key)
 
 
 def parse_action(raw_content: str) -> Action:
@@ -57,35 +56,65 @@ def parse_action(raw_content: str) -> Action:
     return Action(**payload)
 
 
-def fallback_action(observation: Dict) -> Action:
+def _extract_label_value(text: str, label: str) -> str | None:
+    pattern = rf"^{re.escape(label)}:\s*(.+)$"
+    match = re.search(pattern, text, flags=re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
+def _safe_decimal(value: str) -> float:
+    return float(value.replace(",", "").strip())
+
+
+def heuristic_action(observation: Dict) -> Action:
     difficulty = observation["difficulty"]
     content = observation["content"]
 
     if difficulty == "easy":
-        ground_truth_map = {
-            "vendor_name": "Sunrise Office Supplies Pvt Ltd",
-            "invoice_number": "INV-2026-0142",
-            "invoice_date": "2026-03-14",
-            "currency": "INR",
-            "total_amount": "13983.00",
+        invoice_text = content["document"]["invoice_text"]
+        extracted_map = {
+            "vendor_name": _extract_label_value(invoice_text, "Vendor"),
+            "invoice_number": _extract_label_value(invoice_text, "Invoice Number"),
+            "invoice_date": _extract_label_value(invoice_text, "Invoice Date"),
+            "currency": _extract_label_value(invoice_text, "Currency"),
+            "total_amount": _extract_label_value(invoice_text, "Total Amount"),
         }
         current = content.get("current_submission", {})
         for field in content["document"]["required_fields"]:
-            if field not in current:
+            if field not in current and extracted_map.get(field):
                 return Action(
                     action_type="extract",
                     field_name=field,
-                    field_value=ground_truth_map[field],
+                    field_value=extracted_map[field],
                 )
         return Action(action_type="submit")
 
     if difficulty == "medium":
-        actual_issues = [
-            "invalid_invoice_date",
-            "duplicate_line_item",
-            "subtotal_mismatch",
-            "missing_gstin",
-        ]
+        invoice_text = content["document"]["invoice_text"]
+        actual_issues: List[str] = []
+        invoice_date = _extract_label_value(invoice_text, "Invoice Date")
+        subtotal = _extract_label_value(invoice_text, "Subtotal")
+        line_item_matches = re.findall(r"^- (.+)$", invoice_text, flags=re.MULTILINE)
+        gstin = _extract_label_value(invoice_text, "GSTIN")
+        amount_matches = re.findall(r"= ([0-9.]+)", invoice_text)
+
+        if invoice_date:
+            try:
+                datetime.strptime(invoice_date, "%d/%m/%Y")
+            except ValueError:
+                actual_issues.append("invalid_invoice_date")
+
+        if len(line_item_matches) != len(set(line_item_matches)):
+            actual_issues.append("duplicate_line_item")
+
+        if subtotal and amount_matches:
+            computed_subtotal = round(sum(_safe_decimal(amount) for amount in amount_matches), 2)
+            if abs(computed_subtotal - _safe_decimal(subtotal)) > 0.009:
+                actual_issues.append("subtotal_mismatch")
+
+        if gstin and gstin.upper() == "MISSING":
+            actual_issues.append("missing_gstin")
+
         flagged = set(content.get("flagged_issues", []))
         for issue in actual_issues:
             if issue not in flagged:
@@ -94,24 +123,43 @@ def fallback_action(observation: Dict) -> Action:
 
     current_matches = content.get("current_matches", {})
     current_unmatched = set(content.get("current_unmatched_invoices", []))
-    target_matches = {
-        "INV-A1": "PO-9001",
-        "INV-M2": "PO-9002",
-        "INV-Z3": "PO-9003",
-    }
-    for invoice_id, po_id in target_matches.items():
-        if current_matches.get(invoice_id) != po_id:
-            return Action(action_type="match", invoice_id=invoice_id, po_id=po_id)
-    if "INV-X9" not in current_unmatched:
-        return Action(action_type="flag", invoice_id="INV-X9")
+    current_discrepancies = set(content.get("current_flagged_discrepancies", []))
+    purchase_orders = content["document"]["purchase_orders"]
+    invoices = content["document"]["invoices"]
+
+    po_by_vendor = {po["vendor"]: po for po in purchase_orders}
+    for invoice in invoices:
+        invoice_id = invoice["invoice_id"]
+        matching_po = po_by_vendor.get(invoice["vendor"])
+        if matching_po and current_matches.get(invoice_id) != matching_po["po_id"]:
+            return Action(action_type="match", invoice_id=invoice_id, po_id=matching_po["po_id"])
+
+    for invoice in invoices:
+        invoice_id = invoice["invoice_id"]
+        matching_po = po_by_vendor.get(invoice["vendor"])
+        if not matching_po and invoice_id not in current_unmatched:
+            return Action(action_type="flag", invoice_id=invoice_id)
+
+    for invoice in invoices:
+        invoice_id = invoice["invoice_id"]
+        matching_po = po_by_vendor.get(invoice["vendor"])
+        if not matching_po:
+            continue
+        if abs(_safe_decimal(invoice["amount"]) - _safe_decimal(matching_po["amount"])) > 0.009:
+            if invoice_id not in current_discrepancies:
+                return Action(action_type="flag", invoice_id=invoice_id, issue_code="amount_mismatch")
+
     return Action(action_type="submit")
 
 
-def choose_action(client: OpenAI, model_name: str, observation: Dict) -> Action:
+def choose_action(client: OpenAI | None, model_name: str, observation: Dict) -> Action:
+    if client is None:
+        return heuristic_action(observation)
+
     try:
         response = client.chat.completions.create(
             model=model_name,
-            temperature=0.1,
+            temperature=0,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
@@ -129,10 +177,10 @@ def choose_action(client: OpenAI, model_name: str, observation: Dict) -> Action:
             raise RuntimeError("Model returned empty content")
         return parse_action(content)
     except (json.JSONDecodeError, ValidationError, RuntimeError, KeyError, TypeError):
-        return fallback_action(observation)
+        return heuristic_action(observation)
 
 
-def run_episode(env: FinanceOpsEnv, client: OpenAI, model_name: str, difficulty: str) -> Dict[str, float]:
+def run_episode(env: FinanceOpsEnv, client: OpenAI | None, model_name: str, difficulty: str) -> Dict[str, float]:
     observation = env.reset(difficulty).model_dump()
     total_reward = 0.0
     done = False
@@ -156,9 +204,10 @@ def run_episode(env: FinanceOpsEnv, client: OpenAI, model_name: str, difficulty:
 
 
 def main() -> None:
-    model_name = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
+    baseline_mode = os.getenv("BASELINE_MODE", "heuristic").strip().lower()
+    model_name = os.getenv("MODEL_NAME", "gpt-4.1-mini")
 
-    client = build_client()
+    client = build_client() if baseline_mode == "model" else None
     env = FinanceOpsEnv()
     results: List[Dict[str, float]] = []
     for difficulty in ("easy", "medium", "hard"):

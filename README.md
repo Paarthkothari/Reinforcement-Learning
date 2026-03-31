@@ -4,7 +4,7 @@ FinanceOps OpenEnv is a real-world training environment for AI agents working on
 
 1. Invoice field extraction
 2. Invoice anomaly validation
-3. Purchase-order reconciliation
+3. Purchase-order reconciliation with discrepancy handling
 
 The environment exposes the standard `reset()`, `step()`, and `state()` interface with typed Pydantic models and a FastAPI wrapper for local testing or deployment to Hugging Face Spaces.
 
@@ -120,10 +120,11 @@ Reward shaping rules:
 
 ### Hard: PO reconciliation
 
-- Goal: match invoices to purchase orders and flag unmatched invoices
+- Goal: match invoices to purchase orders, flag unmatched invoices, and flag amount discrepancies
 - Grader:
-  - 75% invoice-to-PO match accuracy
-  - 25% unmatched invoice detection with false-positive penalty
+  - 60% invoice-to-PO match accuracy
+  - 20% unmatched invoice detection with false-positive penalty
+  - 20% amount-discrepancy detection with false-positive penalty
 
 ## Local setup
 
@@ -161,37 +162,42 @@ print(reward.model_dump())
 
 ## Inference script
 
-The root `inference.py` uses the OpenAI Python client, but it now defaults to Groq's OpenAI-compatible API. It reads:
+The root `inference.py` supports two modes:
 
-- `GROQ_API_KEY` preferred
-- `OPENAI_API_KEY` or `HF_TOKEN` as fallback
-- `API_BASE_URL` optional, defaults to `https://api.groq.com/openai/v1`
-- `MODEL_NAME` optional, defaults to `llama-3.1-8b-instant`
+- `BASELINE_MODE=heuristic` (default): deterministic, reproducible baseline with no API key required
+- `BASELINE_MODE=model`: uses the OpenAI Python client and reads `OPENAI_API_KEY`
 
-Run it like this:
+Optional variables:
+
+- `MODEL_NAME` optional, defaults to `gpt-4.1-mini`
+- `API_BASE_URL` optional if you need an OpenAI-compatible endpoint
+
+Run the deterministic baseline:
 
 ```bash
-set GROQ_API_KEY=your_key
-set MODEL_NAME=llama-3.1-8b-instant
+set BASELINE_MODE=heuristic
 python inference.py
 ```
 
-If you want to be explicit, you can also set:
+Run the OpenAI model baseline:
 
 ```bash
-set API_BASE_URL=https://api.groq.com/openai/v1
+set BASELINE_MODE=model
+set OPENAI_API_KEY=your_key
+set MODEL_NAME=gpt-4.1-mini
+python inference.py
 ```
 
-Expected output format:
+Current deterministic baseline output:
 
 ```text
-easy: total_reward=0.7600 task_score=1.0000 steps=6
-medium: total_reward=0.4600 task_score=0.7500 steps=5
-hard: total_reward=0.3100 task_score=0.8333 steps=6
-mean_task_score=0.8611
+easy: total_reward=1.9000 task_score=1.0000 steps=6
+medium: total_reward=1.5200 task_score=1.0000 steps=5
+hard: total_reward=1.7000 task_score=1.0000 steps=6
+mean_task_score=1.0000
 ```
 
-These sample numbers are illustrative. Your exact baseline depends on the Groq model behind `MODEL_NAME`.
+This baseline is reproducible because the heuristic path is deterministic. Model-mode scores depend on the chosen model.
 
 ## Docker
 
@@ -237,11 +243,6 @@ Helpful references:
 - Rewards are shaped but deterministic for identical action sequences.
 - Inference reproducibility improves by keeping temperature very low.
 
-## Groq compatibility notes
+## Notes on baseline honesty
 
-This project uses Groq through the official OpenAI compatibility layer. According to Groq's official docs, the OpenAI client should be pointed at `https://api.groq.com/openai/v1` and authenticated with `GROQ_API_KEY`.
-
-Sources:
-
-- https://console.groq.com/docs/openai
-- https://console.groq.com/docs/models
+The baseline heuristic is derived only from the visible observation content. It does not read hidden ground-truth labels from task definitions, which keeps the benchmark honest even when the model path is disabled or malformed.

@@ -20,6 +20,6 @@ tasks:
     reward_range: [-1.0, 1.0]
   - id: po_reconcile_hard
     difficulty: hard
-    description: "Match invoices to purchase orders and flag unmatched invoices."
+    description: "Match invoices to purchase orders, flag unmatched invoices, and detect amount mismatches."
     grader: "env.tasks.hard:grade_hard_submission"
     reward_range: [-1.0, 1.0]
