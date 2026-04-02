@@ -7,9 +7,11 @@ def grade_hard_submission(
     predicted_matches: Dict[str, str],
     predicted_unmatched: Iterable[str],
     predicted_discrepancies: Iterable[str],
+    predicted_duplicates: Iterable[str],
     ground_truth_matches: Dict[str, str],
     ground_truth_unmatched: Iterable[str],
     ground_truth_discrepancies: Dict[str, str],
+    ground_truth_duplicates: Iterable[str],
 ) -> float:
     match_total = len(ground_truth_matches)
     matched_correct = sum(
@@ -43,5 +45,22 @@ def grade_hard_submission(
     false_discrepancies = len(predicted_discrepancy_set - ground_truth_discrepancy_set)
     discrepancy_score = max(0.0, discrepancy_score - (0.1 * false_discrepancies))
 
-    weighted_score = (0.6 * match_score) + (0.2 * unmatched_score) + (0.2 * discrepancy_score)
+    predicted_duplicate_set = set(predicted_duplicates)
+    ground_truth_duplicate_set = set(ground_truth_duplicates)
+    if ground_truth_duplicate_set:
+        duplicate_score = len(predicted_duplicate_set & ground_truth_duplicate_set) / len(
+            ground_truth_duplicate_set
+        )
+    else:
+        duplicate_score = 1.0
+
+    false_duplicates = len(predicted_duplicate_set - ground_truth_duplicate_set)
+    duplicate_score = max(0.0, duplicate_score - (0.1 * false_duplicates))
+
+    weighted_score = (
+        (0.5 * match_score)
+        + (0.15 * unmatched_score)
+        + (0.2 * discrepancy_score)
+        + (0.15 * duplicate_score)
+    )
     return round(max(0.0, min(1.0, weighted_score)), 4)
