@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+finance_ops_openenv.egg-info/PKG-INFO
+finance_ops_openenv.egg-info/SOURCES.txt
+finance_ops_openenv.egg-info/dependency_links.txt
+finance_ops_openenv.egg-info/entry_points.txt
+finance_ops_openenv.egg-info/requires.txt
+finance_ops_openenv.egg-info/top_level.txt
+server/__init__.py
+server/app.py

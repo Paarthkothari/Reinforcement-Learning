@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .env
 _openenv_upstream/
+credential.txt
+env/credential.txt

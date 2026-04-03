@@ -5,6 +5,7 @@ description = "OpenEnv-compatible finance operations environment for invoice ext
 requires-python = ">=3.10"
 dependencies = [
   "fastapi==0.115.12",
+  "gradio==5.30.0",
   "uvicorn[standard]==0.34.0",
   "pydantic==2.11.3",
   "openai>=2.7.2",

@@ -12,9 +12,29 @@ from pydantic import ValidationError
 
 from env import Action, FinanceOpsEnv
 
+
+def _read_first_nonempty_line(path: str) -> str | None:
+    if not os.path.exists(path):
+        return None
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            value = line.strip()
+            if value:
+                return value
+    return None
+
+
+def _load_hf_token() -> str | None:
+    return (
+        os.getenv("HF_TOKEN")
+        or _read_first_nonempty_line("credential.txt")
+        or _read_first_nonempty_line(os.path.join("env", "credential.txt"))
+    )
+
+
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
-HF_TOKEN = os.getenv("HF_TOKEN")
+MODEL_NAME = os.getenv("MODEL_NAME", "deepseek-ai/DeepSeek-R1:fastest")
+HF_TOKEN = _load_hf_token()
 TASK_NAME = os.getenv("FINANCE_OPS_TASK", "invoice_extract_easy")
 BENCHMARK = os.getenv("FINANCE_OPS_BENCHMARK", "finance-ops-openenv")
 BASELINE_MODE = os.getenv("BASELINE_MODE", "heuristic").strip().lower()

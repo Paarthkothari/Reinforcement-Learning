@@ -1,25 +1,35 @@
 # FinanceOps OpenEnv
 
-FinanceOps OpenEnv is a real-world training environment for AI agents working on SMB finance operations. It simulates three common workflows:
+FinanceOps OpenEnv is an OpenEnv-compatible benchmark environment for finance operations workflows. It models three practical back-office tasks that human teams actually perform:
 
-1. Invoice field extraction
-2. Invoice anomaly validation
-3. Purchase-order reconciliation with discrepancy handling
+1. invoice field extraction
+2. invoice anomaly validation
+3. purchase-order reconciliation
 
-The environment exposes the standard `reset()`, `step()`, and `state()` interface with typed Pydantic models and a FastAPI wrapper for local testing or deployment to Hugging Face Spaces.
+The project is benchmark-first. It is designed for agent training and evaluation, with typed models, deterministic graders, dense rewards, local debugging tools, and deployment support for Docker and Hugging Face Spaces.
 
-## Why this environment is useful
+## Why This Environment Matters
 
-This domain is practical rather than game-like. Finance teams routinely extract invoice fields, validate faulty invoices, and reconcile invoices against approved purchase orders. Those workflows are repetitive, rules-driven, and measurable, which makes them a strong fit for agent evaluation.
+Finance operations teams routinely process invoices, validate faulty documents, and reconcile vendor invoices against approved purchase orders. These are repetitive, rules-heavy, auditable tasks that are valuable for benchmarking agent reliability.
 
-## Project structure
+This environment aims to score well on the typical OpenEnv judging dimensions:
+
+- real-world utility: the task domain is practical and non-toy
+- task quality: three tasks with meaningful difficulty progression
+- environment design: stateful multi-step interaction with penalties and partial credit
+- code quality: typed models, structured repo, Docker support, validator support
+- creativity: richer hard-task mechanics like vendor aliases, duplicate invoices, split invoices, and bad PO references
+
+## Project Structure
 
 ```text
 .
 |-- app.py
+|-- credential.txt                # optional local token file, gitignored
 |-- Dockerfile
 |-- env
 |   |-- __init__.py
+|   |-- credential.txt            # optional local token file, gitignored
 |   |-- data.py
 |   |-- environment.py
 |   |-- models.py
@@ -30,219 +40,353 @@ This domain is practical rather than game-like. Finance teams routinely extract 
 |       `-- medium.py
 |-- inference.py
 |-- openenv.yaml
+|-- pyproject.toml
 |-- README.md
 `-- requirements.txt
 ```
 
-## Environment API
+## Core Interface
 
-### Observation
+The environment implements the OpenEnv-style lifecycle:
 
-The observation is what the agent sees on each step.
+- `reset(difficulty)` returns the initial `Observation`
+- `step(action)` returns `(observation, reward, done, info)`
+- `state()` returns the full current environment state
 
-```json
-{
-  "task_id": "invoice_extract_easy",
-  "difficulty": "easy",
-  "content": {
-    "instructions": "Extract the required fields from the invoice text, then submit when you are confident.",
-    "document": {
-      "invoice_text": "Vendor: ...",
-      "required_fields": ["vendor_name", "invoice_number", "invoice_date", "currency", "total_amount"]
-    },
-    "current_submission": {}
-  },
-  "available_actions": ["extract", "flag", "match", "submit", "skip"],
-  "step_number": 0,
-  "max_steps": 8,
-  "context": "Finance operations task: extraction"
-}
-```
+Typed models live in [env/models.py](./env/models.py):
 
-### Action
+- `Observation`
+- `Action`
+- `Reward`
 
-The action is what the agent sends back to the environment.
+The main environment implementation lives in [env/environment.py](./env/environment.py).
 
-```json
-{
-  "action_type": "extract",
-  "field_name": "invoice_number",
-  "field_value": "INV-2026-0142"
-}
-```
+## Tasks
 
-Supported action types:
+### Easy: Invoice Extraction
 
-- `extract`: used in the easy extraction task
-- `flag`: used in validation and reconciliation
-- `match`: used in reconciliation
-- `submit`: ends the episode and triggers final grading
-- `skip`: no-op with a small penalty
+Goal:
+- extract `vendor_name`
+- extract `invoice_number`
+- extract `invoice_date`
+- extract `currency`
+- extract `total_amount`
 
-### Reward
+Realism improvements:
+- label aliases such as `Supplier`, `Inv No`, `Grand Total`
+- vendor alias normalization hints
+- mild OCR-style formatting variation
 
-Each step returns a typed reward with dense signal:
+Grader:
+- exact normalized match by required field
 
-```json
-{
-  "score": 0.2,
-  "reason": "Correct extraction for 'invoice_number'.",
-  "partial_credit": 0.2
-}
-```
+### Medium: Invoice Validation
 
-Reward shaping rules:
+Goal:
+- flag every genuine anomaly
+- avoid false positives
 
-- Correct field extraction: positive reward
-- Partial extraction: smaller positive reward
-- Correct anomaly flags: positive reward
-- False positives and wrong matches: negative reward
-- Late submissions: step penalty
-- Repeated or irrelevant actions: small penalty
+Anomalies used in variants:
+- `invalid_invoice_date`
+- `duplicate_line_item`
+- `subtotal_mismatch`
+- `missing_gstin`
 
-## Tasks and graders
+Realism improvements:
+- bad date formats
+- duplicated service lines
+- arithmetic inconsistencies
+- compliance metadata gaps
 
-### Easy: invoice extraction
+Grader:
+- recall with false-positive penalties, clamped to `0.0..1.0`
 
-- Goal: extract `vendor_name`, `invoice_number`, `invoice_date`, `currency`, `total_amount`
-- Grader: exact normalized field match
-- Output score: `correct_fields / total_fields`
+### Hard: PO Reconciliation
 
-### Medium: invoice validation
+Goal:
+- match invoices to purchase orders
+- flag unmatched invoices
+- flag amount mismatches
+- flag duplicate invoices
 
-- Goal: detect all real anomalies in a faulty invoice
-- Ground-truth issues:
-  - `invalid_invoice_date`
-  - `duplicate_line_item`
-  - `subtotal_mismatch`
-  - `missing_gstin`
-- Grader: recall with false-positive penalty
+Realism improvements:
+- vendor aliases
+- PO references
+- conflicting vendor names
+- split invoices / partial payments
+- wrong PO references
+- duplicate invoice submissions
+- amount tolerance rules
 
-### Hard: PO reconciliation
+Grader:
+- match accuracy
+- unmatched detection
+- amount mismatch detection
+- duplicate invoice detection
 
-- Goal: match invoices to purchase orders, flag unmatched invoices, and flag amount discrepancies
-- Grader:
-  - 60% invoice-to-PO match accuracy
-  - 20% unmatched invoice detection with false-positive penalty
-  - 20% amount-discrepancy detection with false-positive penalty
+All graders are deterministic and return values in `0.0..1.0`.
 
-## Local setup
+## Environment Design
 
-Create a virtual environment, install dependencies, and run the API:
+The environment uses dense rewards rather than only binary success/failure.
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app:app --reload
-```
+Positive signals:
+- correct extraction
+- correct anomaly flag
+- correct PO match
+- correct discrepancy flag
+- correct duplicate-invoice flag
 
-API endpoints:
+Negative signals:
+- wrong extraction
+- wrong match
+- false positive flags
+- repeated flags or repeated matches
+- invalid actions
+- skipping turns
+- incomplete submission through readiness penalties
+
+The environment also tracks richer internal state:
+
+- extracted fields
+- flagged issues
+- matches
+- unmatched invoices
+- flagged discrepancies
+- flagged duplicate invoices
+- review memory
+- action history
+- last action error
+
+This state is available through `state()` and partially surfaced in `Observation.content`.
+
+## Dynamic But Deterministic Task Generation
+
+Task payloads are not single hardcoded examples anymore. Variants are defined in [env/data.py](./env/data.py), and `reset()` cycles through them deterministically per difficulty.
+
+That means:
+
+- repeated resets expose different realistic cases
+- graders still remain deterministic
+- evaluation stays reproducible
+- the baseline can be tested across multiple variants
+
+## API Endpoints
+
+The FastAPI app in [app.py](./app.py) exposes:
 
 - `GET /health`
+- `GET /metadata`
+- `GET /schema`
+- `POST /mcp`
 - `POST /reset`
 - `POST /reset/{difficulty}`
 - `POST /step`
 - `GET /state`
 
-## Minimal usage example
+## Local Web Debugger
 
-```python
-from env import Action, FinanceOpsEnv
+For local manual debugging, the app also mounts a Gradio UI at:
 
-env = FinanceOpsEnv()
-obs = env.reset("easy")
-print(obs.model_dump())
+- `/web`
 
-obs, reward, done, info = env.step(
-    Action(action_type="extract", field_name="invoice_number", field_value="INV-2026-0142")
-)
-print(reward.model_dump())
+This lets you:
+
+- reset the environment by difficulty
+- manually construct actions
+- inspect observations
+- inspect rewards and `done/info`
+- inspect internal state after each step
+
+Run it locally:
+
+```bash
+uvicorn app:app --host 0.0.0.0 --port 7860
 ```
 
-## Inference script
+Then open:
 
-The root `inference.py` supports two modes:
+```text
+http://127.0.0.1:7860/web
+```
 
-- `BASELINE_MODE=heuristic` (default): deterministic, reproducible baseline with no API key required
-- `BASELINE_MODE=model`: uses the OpenAI Python client and reads `OPENAI_API_KEY`
+## Inference Script
 
-Optional variables:
+The root [inference.py](./inference.py) supports two modes:
 
-- `MODEL_NAME` optional, defaults to `gpt-4.1-mini`
-- `API_BASE_URL` optional if you need an OpenAI-compatible endpoint
+- `BASELINE_MODE=heuristic`
+- `BASELINE_MODE=model`
 
-Run the deterministic baseline:
+### Heuristic Mode
+
+This is the reproducible baseline path. It does not require a model call and is useful for grading sanity checks and validator runs.
+
+### Model Mode
+
+Model mode uses the OpenAI Python client against the Hugging Face router.
+
+Default config:
+
+- `API_BASE_URL=https://router.huggingface.co/v1`
+- `MODEL_NAME=deepseek-ai/DeepSeek-R1:fastest`
+
+Authentication:
+
+- primary: `HF_TOKEN` environment variable
+- local fallback: `credential.txt`
+- local fallback: `env/credential.txt`
+
+That means you do not have to type the token every run if you keep it in one of the gitignored credential files.
+
+## Inference Output Contract
+
+The script emits evaluator-facing lines in this format:
+
+```text
+[START] task=<task_name> env=<benchmark> model=<model_name>
+[STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
+[END]   success=<true|false> steps=<n> score=<0.000> rewards=<r1,r2,...,rn>
+```
+
+This format is intentionally stable for evaluation. Even when the environment becomes more realistic, the stdout format should remain evaluator-safe.
+
+Example:
+
+```text
+[START] task=invoice_extract_easy env=finance-ops-openenv model=deepseek-ai/DeepSeek-R1:fastest
+[STEP] step=1 action=extract('vendor_name','Sunrise Office Supplies Pvt Ltd') reward=0.20 done=false error=null
+[STEP] step=2 action=extract('invoice_number','INV-2026-0142') reward=0.20 done=false error=null
+[STEP] step=3 action=extract('invoice_date','2026-03-14') reward=0.20 done=false error=null
+[STEP] step=4 action=extract('currency','INR') reward=0.20 done=false error=null
+[STEP] step=5 action=extract('total_amount','13983.00') reward=0.20 done=false error=null
+[STEP] step=6 action=submit() reward=0.90 done=true error=null
+[END] success=true steps=6 score=1.000 rewards=0.20,0.20,0.20,0.20,0.20,0.90
+```
+
+## Running Locally
+
+Install the project:
+
+```bash
+pip install -e .
+```
+
+Run the heuristic baseline:
 
 ```bash
 set BASELINE_MODE=heuristic
+set FINANCE_OPS_TASK=invoice_extract_easy
 python inference.py
 ```
 
-Run the OpenAI model baseline:
+Run the model baseline through the Hugging Face router:
 
 ```bash
 set BASELINE_MODE=model
-set OPENAI_API_KEY=your_key
-set MODEL_NAME=gpt-4.1-mini
+set HF_TOKEN=your_hf_token
+set API_BASE_URL=https://router.huggingface.co/v1
+set MODEL_NAME=deepseek-ai/DeepSeek-R1:fastest
+set FINANCE_OPS_TASK=po_reconcile_hard
 python inference.py
 ```
 
-Current deterministic baseline output:
+Use a credential file instead of exporting the token every run:
 
 ```text
-easy: total_reward=1.9000 task_score=1.0000 steps=6
-medium: total_reward=1.5200 task_score=1.0000 steps=5
-hard: total_reward=1.7000 task_score=1.0000 steps=6
-mean_task_score=1.0000
+credential.txt
 ```
 
-This baseline is reproducible because the heuristic path is deterministic. Model-mode scores depend on the chosen model.
+Put only the token on the first non-empty line.
+
+## Validation
+
+Run the validator before submission:
+
+```bash
+openenv validate
+```
+
+Current local validation result:
+
+```text
+[OK] Reinforcement: Ready for multi-mode deployment
+```
 
 ## Docker
 
-Build and run locally:
+Build locally:
 
 ```bash
 docker build -t financeops-openenv .
+```
+
+Run locally:
+
+```bash
 docker run -p 7860:7860 financeops-openenv
+```
+
+Then visit:
+
+```text
+http://127.0.0.1:7860/health
+http://127.0.0.1:7860/web
 ```
 
 ## Hugging Face Spaces
 
-This repo is ready for a Docker Space:
+This repo is designed for a Docker Space deployment.
+
+Suggested steps:
 
 1. Create a new Hugging Face Space with Docker SDK.
 2. Push this repository.
-3. Ensure the Space has the `openenv` tag in its metadata or description.
+3. Add `HF_TOKEN` as a Space secret if you want model-mode inference there.
 4. The app will serve on port `7860`.
+5. Use `/web` for manual debugging and the API routes for integration testing.
 
-## Suggested learning plan
+Do not commit credential files or hardcode tokens in source.
 
-If you want to understand every part before extending it, follow this order:
+## Security Notes
 
-1. Python classes and dictionaries
-2. Pydantic models
-3. FastAPI routing
-4. Environment loop design (`reset`, `step`, `state`)
-5. Docker basics
-6. Model-driven inference with the OpenAI client
+- `credential.txt` and `env/credential.txt` are gitignored.
+- Hugging Face tokens should be rotated if they have ever been pasted into chat, terminal history, or a committed file.
+- For deployment, prefer Hugging Face Space secrets or environment variables over plaintext files.
 
-Helpful references:
+## Reproducibility Notes
 
-- Pydantic: https://docs.pydantic.dev/latest/
+- task variants rotate deterministically
+- graders are deterministic
+- reward shaping is deterministic for the same action sequence
+- heuristic mode is reproducible
+- model mode depends on the routed model behavior
+
+## What Changed From The Earlier Version
+
+Compared with the simpler static version, the current environment now includes:
+
+- deterministic generated task variants
+- richer hard-task mechanics
+- duplicate invoice grading
+- review memory and last-action-error tracking
+- stronger penalties for bad actions
+- Hugging Face router support in the inference path
+- `/web` local debugging interface
+- `openenv validate` compatibility
+
+## Recommended Next Steps
+
+The highest-value follow-ups are:
+
+1. add automated tests for reset/step/state and grader score bounds
+2. run a full Docker smoke test after every submission-facing change
+3. verify the Hugging Face Space deployment end-to-end
+4. keep benchmark mode stable before adding optional OCR/upload product layers
+
+## References
+
 - FastAPI: https://fastapi.tiangolo.com/
-- OpenAI API: https://platform.openai.com/docs/api-reference
-- Docker getting started: https://docs.docker.com/get-started/
+- Pydantic: https://docs.pydantic.dev/latest/
+- Gradio: https://www.gradio.app/
+- Hugging Face Inference Providers: https://huggingface.co/docs/inference-providers/main/en/index
 - Hugging Face Docker Spaces: https://huggingface.co/docs/hub/spaces-sdks-docker
-
-## Notes on reproducibility
-
-- Task data is deterministic and embedded locally.
-- Graders are deterministic and return scores in the `0.0` to `1.0` range.
-- Rewards are shaped but deterministic for identical action sequences.
-- Inference reproducibility improves by keeping temperature very low.
-
-## Notes on baseline honesty
-
-The baseline heuristic is derived only from the visible observation content. It does not read hidden ground-truth labels from task definitions, which keeps the benchmark honest even when the model path is disabled or malformed.
