@@ -11,3 +11,4 @@ training_results.json
 .openenv_tmp/
 .dockerconfig/
 AGENTS.md
+.uv-cache/
