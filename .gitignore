@@ -5,3 +5,9 @@ __pycache__/
 _openenv_upstream/
 credential.txt
 env/credential.txt
+qtable.json
+training_log.jsonl
+training_results.json
+.openenv_tmp/
+.dockerconfig/
+AGENTS.md

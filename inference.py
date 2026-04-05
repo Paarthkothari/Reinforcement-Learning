@@ -5,7 +5,7 @@ import os
 import re
 import sys
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from openai import OpenAI
 from pydantic import ValidationError
@@ -64,6 +64,60 @@ Use the exact JSON keys from this schema:
 }
 Choose a single next action based on the current observation."""
 
+TASK_GUIDANCE = {
+    "easy": {
+        "goal": (
+            "Extract exactly these fields from the invoice text: vendor_name, invoice_number, "
+            "invoice_date, currency, total_amount."
+        ),
+        "rules": [
+            "Only use action_type='extract' until all required fields are present, then use submit.",
+            "For extract actions, both field_name and field_value are required.",
+            "Do not invent field names outside the required fields.",
+        ],
+        "examples": [
+            {"action_type": "extract", "field_name": "vendor_name", "field_value": "Sunrise Office Supplies Pvt Ltd"},
+            {"action_type": "submit"},
+        ],
+    },
+    "medium": {
+        "goal": (
+            "Review the invoice and flag anomalies from this catalog only: invalid_invoice_date, "
+            "duplicate_line_item, subtotal_mismatch, missing_gstin."
+        ),
+        "rules": [
+            "Only use action_type='flag' with issue_code for anomalies, then use submit when finished.",
+            "For medium tasks, do not send invoice_id or po_id.",
+            "A valid flag example is {'action_type':'flag','issue_code':'invalid_invoice_date'}.",
+        ],
+        "examples": [
+            {"action_type": "flag", "issue_code": "invalid_invoice_date"},
+            {"action_type": "submit"},
+        ],
+    },
+    "hard": {
+        "goal": (
+            "Reconcile invoices to POs, flag unmatched invoices, flag amount mismatches, detect duplicate invoices, "
+            "and flag invoices that reference multiple POs."
+        ),
+        "rules": [
+            "Use match with both invoice_id and po_id when an invoice maps to a purchase order.",
+            "Use flag with invoice_id only to mark an unmatched invoice.",
+            "Use flag with invoice_id and issue_code='amount_mismatch' for reportable mismatches.",
+            "Use flag with invoice_id and issue_code='duplicate_invoice' for duplicate submissions.",
+            "Use flag with invoice_id and issue_code='split_po' when a single invoice references multiple POs.",
+            "Apply the document FX rates and +/-2% tolerance before deciding whether an amount is a valid match.",
+        ],
+        "examples": [
+            {"action_type": "match", "invoice_id": "INV-A1", "po_id": "PO-9001"},
+            {"action_type": "flag", "invoice_id": "INV-X9"},
+            {"action_type": "flag", "invoice_id": "INV-M2", "issue_code": "amount_mismatch"},
+            {"action_type": "flag", "invoice_id": "INV-S1", "issue_code": "split_po"},
+            {"action_type": "submit"},
+        ],
+    },
+}
+
 
 def build_client() -> OpenAI:
     if not HF_TOKEN:
@@ -84,10 +138,10 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
     )
 
 
-def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+def log_end(success: bool, steps: int, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{reward:.2f}" for reward in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
         flush=True,
     )
 
@@ -149,6 +203,49 @@ def _build_vendor_lookup(document: Dict) -> Dict[str, Dict[str, Dict[str, str]] 
     return {"po_by_id": po_by_id, "alias_map": alias_map}
 
 
+def _extract_po_reference_candidates(invoice: Dict[str, str]) -> List[str]:
+    references: List[str] = []
+    if invoice.get("po_references"):
+        references.extend(str(reference).strip() for reference in invoice["po_references"] if str(reference).strip())
+
+    raw_reference = str(invoice.get("po_reference", "")).strip()
+    if raw_reference:
+        split_values = [raw_reference]
+        for separator in ["/", "|", ";", ","]:
+            next_values: List[str] = []
+            for value in split_values:
+                next_values.extend(value.split(separator))
+            split_values = next_values
+        references.extend(value.strip() for value in split_values if value.strip())
+
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for reference in references:
+        if reference not in seen:
+            seen.add(reference)
+            deduped.append(reference)
+    return deduped
+
+
+def _amount_in_base_currency(amount: str, currency: str, fx_rates: Dict[str, float]) -> float:
+    return _safe_decimal(amount) * float(fx_rates.get(currency, 1.0))
+
+
+def _within_amount_tolerance(invoice: Dict[str, str], po: Dict[str, str], matching_policy: Dict) -> bool:
+    fx_rates = matching_policy.get("fx_rates_to_inr", {})
+    invoice_base = _amount_in_base_currency(invoice["amount"], invoice["currency"], fx_rates)
+    po_base = _amount_in_base_currency(po["amount"], po["currency"], fx_rates)
+    if po_base <= 0:
+        return False
+
+    tolerance_percent = float(matching_policy.get("amount_tolerance_percent", 0.0))
+    if tolerance_percent > 0.0:
+        return abs(invoice_base - po_base) <= (po_base * tolerance_percent / 100.0)
+
+    absolute_tolerance = float(matching_policy.get("amount_tolerance", "0.0"))
+    return abs(invoice_base - po_base) <= absolute_tolerance
+
+
 def _find_duplicate_invoice_ids(invoices: List[Dict[str, str]]) -> set[str]:
     seen_by_external_number: Dict[str, str] = {}
     duplicate_ids: set[str] = set()
@@ -161,6 +258,114 @@ def _find_duplicate_invoice_ids(invoices: List[Dict[str, str]]) -> set[str]:
         else:
             seen_by_external_number[external_number] = invoice["invoice_id"]
     return duplicate_ids
+
+
+def _task_specific_prompt(observation: Dict) -> str:
+    difficulty = observation["difficulty"]
+    guidance = TASK_GUIDANCE[difficulty]
+    examples = "\n".join(json.dumps(example, separators=(",", ":")) for example in guidance["examples"])
+    rules = "\n".join(f"- {rule}" for rule in guidance["rules"])
+    review_memory = observation["content"].get("review_memory", [])
+    last_action_error = observation.get("last_action_error")
+    return (
+        f"Task difficulty: {difficulty}\n"
+        f"Goal: {guidance['goal']}\n"
+        f"Rules:\n{rules}\n"
+        f"Valid JSON examples:\n{examples}\n"
+        f"Recent review memory: {json.dumps(review_memory, ensure_ascii=True)}\n"
+        f"Last action error: {last_action_error or 'null'}"
+    )
+
+
+def _validate_action_for_observation(action: Action, observation: Dict) -> Tuple[bool, str | None]:
+    difficulty = observation["difficulty"]
+
+    if action.action_type == "extract":
+        if difficulty != "easy":
+            return False, "extract is only valid for easy extraction tasks"
+        if not action.field_name or action.field_value is None:
+            return False, "extract actions require both field_name and field_value"
+        required_fields = set(observation["content"]["document"].get("required_fields", []))
+        if action.field_name not in required_fields:
+            return False, f"field_name must be one of {sorted(required_fields)}"
+        return True, None
+
+    if action.action_type == "flag":
+        if difficulty == "easy":
+            return False, "flag is not valid for easy extraction tasks"
+        if difficulty == "medium":
+            valid_issues = set(observation["content"]["document"].get("known_issue_catalog", []))
+            if not action.issue_code:
+                return False, "medium validation flags require issue_code"
+            if action.issue_code not in valid_issues:
+                return False, f"issue_code must be one of {sorted(valid_issues)}"
+            if action.invoice_id or action.po_id:
+                return False, "medium validation flags must not include invoice_id or po_id"
+            return True, None
+        if not action.invoice_id:
+            return False, "hard reconciliation flags require invoice_id"
+        if action.po_id:
+            return False, "hard reconciliation flags must not include po_id"
+        valid_issues = set(observation["content"]["document"].get("known_issue_catalog", []))
+        if action.issue_code and action.issue_code not in valid_issues:
+            return False, f"hard reconciliation issue_code must be one of {sorted(valid_issues)} or omitted"
+        return True, None
+
+    if action.action_type == "match":
+        if difficulty != "hard":
+            return False, "match is only valid for hard reconciliation tasks"
+        if not action.invoice_id or not action.po_id:
+            return False, "match actions require both invoice_id and po_id"
+        return True, None
+
+    if action.action_type in {"submit", "skip"}:
+        return True, None
+
+    return False, "unknown action_type"
+
+
+def _build_messages(observation: Dict, corrective_note: str | None = None, raw_attempt: str | None = None) -> List[Dict[str, str]]:
+    prompt_parts = [
+        _task_specific_prompt(observation),
+        "Observation JSON:",
+        json.dumps(observation, indent=2),
+        "Return exactly one next action as JSON using the required schema.",
+    ]
+    if corrective_note:
+        prompt_parts.extend(
+            [
+                "Your previous action proposal was invalid for this task.",
+                f"Correction: {corrective_note}",
+            ]
+        )
+    if raw_attempt:
+        prompt_parts.extend(["Invalid prior raw output:", raw_attempt])
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "\n\n".join(prompt_parts)},
+    ]
+
+
+def _request_model_action(
+    client: OpenAI,
+    model_name: str,
+    observation: Dict,
+    corrective_note: str | None = None,
+    raw_attempt: str | None = None,
+) -> Action:
+    response = client.chat.completions.create(
+        model=model_name,
+        temperature=0,
+        messages=_build_messages(observation, corrective_note=corrective_note, raw_attempt=raw_attempt),
+    )
+    content = response.choices[0].message.content
+    if not content:
+        raise RuntimeError("Model returned empty content")
+    action = parse_action(content)
+    is_valid, validation_error = _validate_action_for_observation(action, observation)
+    if not is_valid:
+        raise RuntimeError(validation_error or "invalid action for task")
+    return action
 
 
 def heuristic_action(observation: Dict) -> Action:
@@ -238,29 +443,30 @@ def heuristic_action(observation: Dict) -> Action:
     current_matches = content.get("current_matches", {})
     current_unmatched = set(content.get("current_unmatched_invoices", []))
     current_discrepancies = set(content.get("current_flagged_discrepancies", []))
+    current_split_flags = set(content.get("current_flagged_split_invoices", []))
     document = content["document"]
     purchase_orders = document["purchase_orders"]
     invoices = document["invoices"]
     matching_policy = document.get("matching_policy", {})
-    amount_tolerance = float(matching_policy.get("amount_tolerance", "0.00"))
     vendor_lookup = _build_vendor_lookup(document)
     po_by_id = vendor_lookup["po_by_id"]
     alias_map = vendor_lookup["alias_map"]
     po_by_vendor = {po["vendor"]: po for po in purchase_orders}
     current_duplicate_flags = set(content.get("current_flagged_duplicate_invoices", []))
     duplicate_invoice_ids = _find_duplicate_invoice_ids(invoices)
-    po_by_reference = {
-        po["po_reference"]: po for po in purchase_orders if po.get("po_reference")
-    }
+    po_by_reference = {po["po_reference"]: po for po in purchase_orders if po.get("po_reference")}
 
-    def resolve_po(invoice: Dict[str, str]) -> Dict[str, str] | None:
+    def resolve_po(invoice: Dict[str, str]) -> tuple[str, Dict[str, str] | None]:
+        po_references = _extract_po_reference_candidates(invoice)
+        if len(po_references) > 1:
+            return "split_po", None
+
         canonical_vendor = alias_map.get(invoice["vendor"], invoice["vendor"])
-        po_reference = invoice.get("po_reference")
-        if po_reference and po_reference in po_by_reference:
-            referenced_po = po_by_reference[po_reference]
+        if po_references and po_references[0] in po_by_reference:
+            referenced_po = po_by_reference[po_references[0]]
             if referenced_po["vendor"] == canonical_vendor:
-                return referenced_po
-        return po_by_vendor.get(canonical_vendor)
+                return "candidate", referenced_po
+        return "candidate", po_by_vendor.get(canonical_vendor)
 
     for invoice in invoices:
         invoice_id = invoice["invoice_id"]
@@ -269,45 +475,54 @@ def heuristic_action(observation: Dict) -> Action:
 
     for invoice in invoices:
         invoice_id = invoice["invoice_id"]
-        if invoice_id in duplicate_invoice_ids:
+        if invoice_id in duplicate_invoice_ids or invoice_id in current_duplicate_flags:
             continue
-        matching_po = resolve_po(invoice)
-        if matching_po and current_matches.get(invoice_id) != matching_po["po_id"]:
-            return Action(action_type="match", invoice_id=invoice_id, po_id=matching_po["po_id"])
+        resolution, _ = resolve_po(invoice)
+        if resolution == "split_po" and invoice_id not in current_split_flags:
+            return Action(action_type="flag", invoice_id=invoice_id, issue_code="split_po")
 
     for invoice in invoices:
         invoice_id = invoice["invoice_id"]
-        if invoice_id in duplicate_invoice_ids:
+        if invoice_id in duplicate_invoice_ids or invoice_id in current_duplicate_flags or invoice_id in current_split_flags:
             continue
-        matching_po = resolve_po(invoice)
-        if not matching_po and invoice_id not in current_unmatched:
-            return Action(action_type="flag", invoice_id=invoice_id)
 
-    for invoice in invoices:
-        invoice_id = invoice["invoice_id"]
-        if invoice_id in duplicate_invoice_ids:
+        _, matching_po = resolve_po(invoice)
+        if matching_po is None:
+            if invoice_id not in current_unmatched:
+                return Action(action_type="flag", invoice_id=invoice_id)
             continue
-        matched_po_id = current_matches.get(invoice_id)
-        matching_po = po_by_id.get(matched_po_id) if matched_po_id else resolve_po(invoice)
-        if not matching_po:
+
+        if _within_amount_tolerance(invoice, matching_po, matching_policy):
+            if current_matches.get(invoice_id) != matching_po["po_id"]:
+                return Action(action_type="match", invoice_id=invoice_id, po_id=matching_po["po_id"])
             continue
+
+        if invoice_id not in current_discrepancies:
+            return Action(action_type="flag", invoice_id=invoice_id, issue_code="amount_mismatch")
 
     invoices_by_po: Dict[str, List[Dict[str, str]]] = {}
     for invoice in invoices:
         invoice_id = invoice["invoice_id"]
-        if invoice_id in duplicate_invoice_ids:
+        if invoice_id in duplicate_invoice_ids or invoice_id in current_duplicate_flags or invoice_id in current_split_flags:
             continue
         matched_po_id = current_matches.get(invoice_id)
-        matching_po = po_by_id.get(matched_po_id) if matched_po_id else resolve_po(invoice)
+        _, resolved_po = resolve_po(invoice)
+        matching_po = po_by_id.get(matched_po_id) if matched_po_id else resolved_po
         if not matching_po:
             continue
         invoices_by_po.setdefault(matching_po["po_id"], []).append(invoice)
 
+    tolerance_percent = float(matching_policy.get("amount_tolerance_percent", 0.0))
+    fx_rates = matching_policy.get("fx_rates_to_inr", {})
     for po_id, po_invoices in invoices_by_po.items():
         matching_po = po_by_id[po_id]
-        invoice_total = sum(_safe_decimal(invoice["amount"]) for invoice in po_invoices)
-        po_total = _safe_decimal(matching_po["amount"])
-        if abs(invoice_total - po_total) <= amount_tolerance:
+        invoice_total = sum(
+            _amount_in_base_currency(invoice["amount"], invoice["currency"], fx_rates)
+            for invoice in po_invoices
+        )
+        po_total = _amount_in_base_currency(matching_po["amount"], matching_po["currency"], fx_rates)
+        tolerance_value = po_total * (tolerance_percent / 100.0)
+        if abs(invoice_total - po_total) <= tolerance_value:
             continue
 
         for invoice in po_invoices:
@@ -323,27 +538,18 @@ def choose_action(client: OpenAI | None, model_name: str, observation: Dict) -> 
         return heuristic_action(observation)
 
     try:
-        response = client.chat.completions.create(
-            model=model_name,
-            temperature=0,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": (
-                        "Observation JSON:\n"
-                        f"{json.dumps(observation, indent=2)}\n\n"
-                        "Return exactly one next action as JSON using the required schema."
-                    ),
-                },
-            ],
-        )
-        content = response.choices[0].message.content
-        if not content:
-            raise RuntimeError("Model returned empty content")
-        return parse_action(content)
-    except (json.JSONDecodeError, ValidationError, RuntimeError, KeyError, TypeError):
-        return heuristic_action(observation)
+        return _request_model_action(client, model_name, observation)
+    except (json.JSONDecodeError, ValidationError, RuntimeError, KeyError, TypeError) as first_error:
+        try:
+            return _request_model_action(
+                client,
+                model_name,
+                observation,
+                corrective_note=str(first_error),
+                raw_attempt=getattr(first_error, "doc", None),
+            )
+        except (json.JSONDecodeError, ValidationError, RuntimeError, KeyError, TypeError):
+            return heuristic_action(observation)
 
 
 def action_to_log_string(action: Action) -> str:
@@ -386,6 +592,7 @@ def main() -> None:
 
     try:
         observation = env.reset(difficulty).model_dump()
+        observation["last_action_error"] = None
         done = False
 
         while not done:
@@ -405,6 +612,7 @@ def main() -> None:
             )
 
             observation = next_observation.model_dump()
+            observation["last_action_error"] = info.get("last_action_error")
             if steps_taken > observation["max_steps"] + 1:
                 break
 
@@ -413,7 +621,7 @@ def main() -> None:
         print(f"[DEBUG] inference error: {exc}", file=sys.stderr, flush=True)
         success = False
     finally:
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+        log_end(success=success, steps=steps_taken, rewards=rewards)
 
 
 if __name__ == "__main__":

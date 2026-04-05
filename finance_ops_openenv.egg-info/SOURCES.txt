@@ -8,3 +8,5 @@ finance_ops_openenv.egg-info/requires.txt
 finance_ops_openenv.egg-info/top_level.txt
 server/__init__.py
 server/app.py
+tests/test_environment.py
+tests/test_graders.py

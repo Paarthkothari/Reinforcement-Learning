@@ -20,11 +20,18 @@ class FinanceOpsEnv:
         self.unmatched_invoices: set[str] = set()
         self.flagged_discrepancies: set[str] = set()
         self.flagged_duplicate_invoices: set[str] = set()
+        self.flagged_split_invoices: set[str] = set()
         self.action_history: list[Dict[str, Any]] = []
         self.review_memory: list[str] = []
         self.last_reward: Optional[Reward] = None
         self.last_action_error: Optional[str] = None
         self.episode_counters: Dict[str, int] = {task_key: 0 for task_key in TASK_KEYS}
+
+    @staticmethod
+    def _reward(score: float, reason: str, partial_credit: float = 0.0) -> Reward:
+        bounded_score = max(0.0, min(1.0, score))
+        bounded_partial_credit = max(0.0, min(1.0, partial_credit))
+        return Reward(score=bounded_score, reason=reason, partial_credit=bounded_partial_credit)
 
     def reset(self, difficulty: Optional[str] = None) -> Observation:
         task_key = difficulty or self.current_task_key or "easy"
@@ -43,6 +50,7 @@ class FinanceOpsEnv:
         self.unmatched_invoices = set()
         self.flagged_discrepancies = set()
         self.flagged_duplicate_invoices = set()
+        self.flagged_split_invoices = set()
         self.action_history = []
         self.review_memory = []
         self.last_reward = None
@@ -54,19 +62,31 @@ class FinanceOpsEnv:
             self.reset(self.current_task_key)
 
         if self.done:
-            reward = Reward(score=-0.2, reason="Episode already finished. Reset before new actions.", partial_credit=0.0)
+            reward = self._reward(
+                0.0,
+                "Episode already finished. Reset before new actions.",
+                partial_credit=0.0,
+            )
             self.last_action_error = "episode_done"
             return self._make_observation(), reward, True, {"error": "episode_done"}
 
         self.step_count += 1
         reward = self._apply_action(action)
+
+        if self.current_task.get("difficulty") == "hard" and self.step_count > 6:
+            reward = self._reward(
+                score=reward.score - 0.05,
+                reason=f"{reward.reason} Late-step penalty of 0.05 applied after turn 6.",
+                partial_credit=reward.partial_credit,
+            )
+
         self.last_reward = reward
         self.action_history.append(action.model_dump())
 
         if self.step_count >= self.current_task["max_steps"] and not self.done:
             self.done = True
-            reward = Reward(
-                score=max(-1.0, reward.score - 0.2),
+            reward = self._reward(
+                score=reward.score - 0.2,
                 reason=f"{reward.reason} Max steps reached before successful submission.",
                 partial_credit=reward.partial_credit,
             )
@@ -95,6 +115,7 @@ class FinanceOpsEnv:
             "unmatched_invoices": sorted(self.unmatched_invoices),
             "flagged_discrepancies": sorted(self.flagged_discrepancies),
             "flagged_duplicate_invoices": sorted(self.flagged_duplicate_invoices),
+            "flagged_split_invoices": sorted(self.flagged_split_invoices),
             "review_memory": deepcopy(self.review_memory),
             "last_action_error": self.last_action_error,
             "last_reward": self.last_reward.model_dump() if self.last_reward else None,
@@ -119,6 +140,7 @@ class FinanceOpsEnv:
             content["current_unmatched_invoices"] = sorted(self.unmatched_invoices)
             content["current_flagged_discrepancies"] = sorted(self.flagged_discrepancies)
             content["current_flagged_duplicate_invoices"] = sorted(self.flagged_duplicate_invoices)
+            content["current_flagged_split_invoices"] = sorted(self.flagged_split_invoices)
         content["review_memory"] = deepcopy(self.review_memory[-5:])
 
         return Observation(
@@ -144,18 +166,18 @@ class FinanceOpsEnv:
         if action_type == "skip":
             self.last_action_error = None
             self.review_memory.append("Agent skipped a turn.")
-            return Reward(score=-0.03, reason="Skipped a turn.", partial_credit=0.0)
+            return self._reward(0.0, "Skipped a turn.", partial_credit=0.0)
         self.last_action_error = "invalid_action"
-        return Reward(score=-0.1, reason="Invalid action.", partial_credit=0.0)
+        return self._reward(0.0, "Invalid action.", partial_credit=0.0)
 
     def _handle_extract(self, action: Action) -> Reward:
         if self.current_task["type"] != "extraction":
             self.last_action_error = "extract_not_applicable"
-            return Reward(score=-0.08, reason="Extract is not useful for this task.", partial_credit=0.0)
+            return self._reward(0.0, "Extract is not useful for this task.", partial_credit=0.0)
 
         if not action.field_name or action.field_value is None:
             self.last_action_error = "missing_extract_fields"
-            return Reward(score=-0.1, reason="Extraction needs field_name and field_value.", partial_credit=0.0)
+            return self._reward(0.0, "Extraction needs field_name and field_value.", partial_credit=0.0)
 
         ground_truth = self.current_task["ground_truth"]
         expected_value = str(ground_truth.get(action.field_name, ""))
@@ -164,26 +186,26 @@ class FinanceOpsEnv:
 
         if action.field_name not in ground_truth:
             self.last_action_error = "unknown_field"
-            return Reward(score=-0.07, reason=f"Field '{action.field_name}' is not required.", partial_credit=0.0)
+            return self._reward(0.0, f"Field '{action.field_name}' is not required.", partial_credit=0.0)
 
         if submitted_value.strip().lower() == expected_value.strip().lower():
             self.last_action_error = None
             self.review_memory.append(f"Verified extraction for {action.field_name}.")
-            return Reward(score=0.2, reason=f"Correct extraction for '{action.field_name}'.", partial_credit=0.2)
+            return self._reward(0.2, f"Correct extraction for '{action.field_name}'.", partial_credit=0.2)
 
         if submitted_value.strip() and expected_value.strip() and submitted_value.strip().lower() in expected_value.strip().lower():
             self.last_action_error = "partial_extract_match"
             self.review_memory.append(f"Partial extraction for {action.field_name}; needs confirmation.")
-            return Reward(score=0.08, reason=f"Partial extraction for '{action.field_name}'.", partial_credit=0.08)
+            return self._reward(0.08, f"Partial extraction for '{action.field_name}'.", partial_credit=0.08)
 
         self.last_action_error = "incorrect_extract_value"
-        return Reward(score=-0.08, reason=f"Incorrect value for '{action.field_name}'.", partial_credit=0.0)
+        return self._reward(0.0, f"Incorrect value for '{action.field_name}'.", partial_credit=0.0)
 
     def _handle_flag(self, action: Action) -> Reward:
         if self.current_task["type"] == "validation":
             if not action.issue_code:
                 self.last_action_error = "missing_issue_code"
-                return Reward(score=-0.1, reason="Flag action needs issue_code.", partial_credit=0.0)
+                return self._reward(0.0, "Flag action needs issue_code.", partial_credit=0.0)
 
             actual_issues = set(self.current_task["ground_truth"]["issues"])
             already_flagged = action.issue_code in self.flagged_issues
@@ -191,28 +213,29 @@ class FinanceOpsEnv:
 
             if already_flagged:
                 self.last_action_error = "duplicate_issue_flag"
-                return Reward(score=-0.03, reason=f"Issue '{action.issue_code}' was already flagged.", partial_credit=0.0)
+                return self._reward(0.0, f"Issue '{action.issue_code}' was already flagged.", partial_credit=0.0)
             if action.issue_code in actual_issues:
                 self.last_action_error = None
                 self.review_memory.append(f"Validated anomaly {action.issue_code}.")
-                return Reward(score=0.15, reason=f"Correctly flagged '{action.issue_code}'.", partial_credit=0.15)
+                return self._reward(0.15, f"Correctly flagged '{action.issue_code}'.", partial_credit=0.15)
             self.last_action_error = "false_positive_issue"
-            return Reward(score=-0.07, reason=f"'{action.issue_code}' is a false positive.", partial_credit=0.0)
+            return self._reward(0.0, f"'{action.issue_code}' is a false positive.", partial_credit=0.0)
 
         if self.current_task["type"] == "reconciliation":
             if not action.invoice_id:
                 self.last_action_error = "missing_invoice_id"
-                return Reward(score=-0.1, reason="Flag action needs invoice_id for reconciliation.", partial_credit=0.0)
+                return self._reward(0.0, "Flag action needs invoice_id for reconciliation.", partial_credit=0.0)
 
             true_unmatched = set(self.current_task["ground_truth"]["unmatched_invoices"])
-            true_discrepancies = set(self.current_task["ground_truth"].get("discrepancies", {}).keys())
+            true_discrepancies = self.current_task["ground_truth"].get("discrepancies", {})
             true_duplicates = set(self.current_task["ground_truth"].get("duplicate_invoices", []))
+            expected_discrepancy_issue = self._expected_discrepancy_issue(action.invoice_id, true_discrepancies)
 
             if action.issue_code == "duplicate_invoice":
                 if action.invoice_id in self.flagged_duplicate_invoices:
                     self.last_action_error = "duplicate_duplicate_flag"
-                    return Reward(
-                        score=-0.03,
+                    return self._reward(
+                        score=0.0,
                         reason=f"Invoice '{action.invoice_id}' duplicate status was already flagged.",
                         partial_credit=0.0,
                     )
@@ -221,14 +244,14 @@ class FinanceOpsEnv:
                 if action.invoice_id in true_duplicates:
                     self.last_action_error = None
                     self.review_memory.append(f"Flagged duplicate invoice {action.invoice_id}.")
-                    return Reward(
+                    return self._reward(
                         score=0.12,
                         reason=f"Correctly flagged duplicate invoice '{action.invoice_id}'.",
                         partial_credit=0.12,
                     )
                 self.last_action_error = "false_duplicate_flag"
-                return Reward(
-                    score=-0.08,
+                return self._reward(
+                    score=0.0,
                     reason=f"Invoice '{action.invoice_id}' is not a duplicate invoice.",
                     partial_credit=0.0,
                 )
@@ -236,51 +259,76 @@ class FinanceOpsEnv:
             if action.issue_code == "amount_mismatch":
                 if action.invoice_id in self.flagged_discrepancies:
                     self.last_action_error = "duplicate_discrepancy_flag"
-                    return Reward(
-                        score=-0.03,
+                    return self._reward(
+                        score=0.0,
                         reason=f"Invoice '{action.invoice_id}' discrepancy was already flagged.",
                         partial_credit=0.0,
                     )
 
                 self.flagged_discrepancies.add(action.invoice_id)
-                if action.invoice_id in true_discrepancies:
+                if expected_discrepancy_issue == "amount_mismatch":
                     self.last_action_error = None
                     self.review_memory.append(f"Flagged amount mismatch for {action.invoice_id}.")
-                    return Reward(
+                    return self._reward(
                         score=0.14,
                         reason=f"Correctly flagged amount mismatch for '{action.invoice_id}'.",
                         partial_credit=0.14,
                     )
                 self.last_action_error = "false_amount_mismatch"
-                return Reward(
-                    score=-0.08,
+                return self._reward(
+                    score=0.0,
                     reason=f"Invoice '{action.invoice_id}' does not have a reportable amount mismatch.",
+                    partial_credit=0.0,
+                )
+
+            if action.issue_code == "split_po":
+                if action.invoice_id in self.flagged_split_invoices:
+                    self.last_action_error = "duplicate_split_flag"
+                    return self._reward(
+                        score=0.0,
+                        reason=f"Invoice '{action.invoice_id}' split-PO status was already flagged.",
+                        partial_credit=0.0,
+                    )
+
+                self.flagged_split_invoices.add(action.invoice_id)
+                if expected_discrepancy_issue == "split_po":
+                    self.last_action_error = None
+                    self.review_memory.append(f"Flagged split PO reference for {action.invoice_id}.")
+                    return self._reward(
+                        score=0.14,
+                        reason=f"Correctly flagged split PO reference for '{action.invoice_id}'.",
+                        partial_credit=0.14,
+                    )
+                self.last_action_error = "false_split_po_flag"
+                return self._reward(
+                    score=0.0,
+                    reason=f"Invoice '{action.invoice_id}' does not require a split_po flag.",
                     partial_credit=0.0,
                 )
 
             if action.invoice_id in self.unmatched_invoices:
                 self.last_action_error = "duplicate_unmatched_flag"
-                return Reward(score=-0.03, reason=f"Invoice '{action.invoice_id}' was already flagged.", partial_credit=0.0)
+                return self._reward(0.0, f"Invoice '{action.invoice_id}' was already flagged.", partial_credit=0.0)
 
             self.unmatched_invoices.add(action.invoice_id)
             if action.invoice_id in true_unmatched:
                 self.last_action_error = None
                 self.review_memory.append(f"Marked invoice {action.invoice_id} as unmatched.")
-                return Reward(score=0.18, reason=f"Correctly flagged unmatched invoice '{action.invoice_id}'.", partial_credit=0.18)
+                return self._reward(0.18, f"Correctly flagged unmatched invoice '{action.invoice_id}'.", partial_credit=0.18)
             self.last_action_error = "false_unmatched_flag"
-            return Reward(score=-0.08, reason=f"Invoice '{action.invoice_id}' should not be flagged unmatched.", partial_credit=0.0)
+            return self._reward(0.0, f"Invoice '{action.invoice_id}' should not be flagged unmatched.", partial_credit=0.0)
 
         self.last_action_error = "flag_not_applicable"
-        return Reward(score=-0.08, reason="Flag is not useful for this task.", partial_credit=0.0)
+        return self._reward(0.0, "Flag is not useful for this task.", partial_credit=0.0)
 
     def _handle_match(self, action: Action) -> Reward:
         if self.current_task["type"] != "reconciliation":
             self.last_action_error = "match_not_applicable"
-            return Reward(score=-0.08, reason="Match is not useful for this task.", partial_credit=0.0)
+            return self._reward(0.0, "Match is not useful for this task.", partial_credit=0.0)
 
         if not action.invoice_id or not action.po_id:
             self.last_action_error = "missing_match_fields"
-            return Reward(score=-0.1, reason="Match action needs invoice_id and po_id.", partial_credit=0.0)
+            return self._reward(0.0, "Match action needs invoice_id and po_id.", partial_credit=0.0)
 
         ground_truth_matches = self.current_task["ground_truth"]["matches"]
         previous_po = self.matches.get(action.invoice_id)
@@ -288,18 +336,18 @@ class FinanceOpsEnv:
 
         if previous_po == action.po_id:
             self.last_action_error = "duplicate_match"
-            return Reward(score=-0.03, reason=f"Match for '{action.invoice_id}' already recorded.", partial_credit=0.0)
+            return self._reward(0.0, f"Match for '{action.invoice_id}' already recorded.", partial_credit=0.0)
         if ground_truth_matches.get(action.invoice_id) == action.po_id:
             self.last_action_error = None
             self.review_memory.append(f"Matched {action.invoice_id} to {action.po_id}.")
-            return Reward(score=0.16, reason=f"Correct match {action.invoice_id} -> {action.po_id}.", partial_credit=0.16)
+            return self._reward(0.16, f"Correct match {action.invoice_id} -> {action.po_id}.", partial_credit=0.16)
         self.last_action_error = "incorrect_match"
-        return Reward(score=-0.1, reason=f"Incorrect match {action.invoice_id} -> {action.po_id}.", partial_credit=0.0)
+        return self._reward(0.0, f"Incorrect match {action.invoice_id} -> {action.po_id}.", partial_credit=0.0)
 
     def _handle_submit(self) -> Reward:
         final_score = self._current_score_snapshot()
         self.done = True
-        step_penalty = min(0.25, 0.02 * max(0, self.step_count - 1))
+        step_penalty = 0.0 if self.current_task["type"] == "reconciliation" else min(0.25, 0.02 * max(0, self.step_count - 1))
         readiness_penalty = 0.0
         if self.current_task["type"] == "extraction":
             required_fields = set(self.current_task["document"]["required_fields"])
@@ -311,10 +359,10 @@ class FinanceOpsEnv:
         elif self.current_task["type"] == "reconciliation":
             if len(self.matches) < len(self.current_task["ground_truth"]["matches"]):
                 readiness_penalty += 0.1
-        score = max(-1.0, min(1.0, final_score - step_penalty))
-        score = max(-1.0, min(1.0, score - readiness_penalty))
+        score = max(0.0, min(1.0, final_score - step_penalty))
+        score = max(0.0, min(1.0, score - readiness_penalty))
         self.last_action_error = None
-        return Reward(
+        return self._reward(
             score=round(score, 4),
             reason=(
                 f"Submitted episode with final task score {final_score:.4f}, "
@@ -332,10 +380,25 @@ class FinanceOpsEnv:
         return grade_hard_submission(
             self.matches,
             self.unmatched_invoices,
-            self.flagged_discrepancies,
+            self.flagged_discrepancies | self.flagged_split_invoices,
             self.flagged_duplicate_invoices,
             self.current_task["ground_truth"]["matches"],
             self.current_task["ground_truth"]["unmatched_invoices"],
             self.current_task["ground_truth"].get("discrepancies", {}),
             self.current_task["ground_truth"].get("duplicate_invoices", []),
         )
+
+    def _expected_discrepancy_issue(
+        self,
+        invoice_id: str,
+        discrepancies: Dict[str, Any],
+    ) -> str | None:
+        payload = discrepancies.get(invoice_id)
+        if payload is None:
+            return None
+        if isinstance(payload, dict):
+            issue_code = payload.get("issue_code")
+            return str(issue_code) if issue_code else None
+        if isinstance(payload, str) and payload in {"amount_mismatch", "split_po"}:
+            return payload
+        return "amount_mismatch"

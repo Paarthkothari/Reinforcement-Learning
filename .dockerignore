@@ -2,5 +2,15 @@
 .venv
 __pycache__
 *.pyc
+.tmp
+.dockerconfig
+credential.txt
+env/credential.txt
+qtable.json
+training_log.jsonl
+training_results.json
+.venv
+__pycache__
+*.pyc
 .env
 _openenv_upstream
