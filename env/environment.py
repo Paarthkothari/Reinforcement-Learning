@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 from .data import TASK_KEYS, generate_task
 from .models import Action, Observation, Reward
 from .tasks import grade_easy_submission, grade_hard_submission, grade_medium_submission
+from .tasks.scoring import clamp_open_unit_interval
 
 
 class FinanceOpsEnv:
@@ -361,6 +362,7 @@ class FinanceOpsEnv:
                 readiness_penalty += 0.1
         score = max(0.0, min(1.0, final_score - step_penalty))
         score = max(0.0, min(1.0, score - readiness_penalty))
+        score = clamp_open_unit_interval(score)
         self.last_action_error = None
         return self._reward(
             score=round(score, 4),

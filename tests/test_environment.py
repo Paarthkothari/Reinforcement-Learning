@@ -115,6 +115,16 @@ class FinanceOpsEnvironmentTests(unittest.TestCase):
             "[END] success=true steps=3 rewards=0.20,0.00,1.00",
         )
 
+    def test_submit_returns_strict_task_score_bounds(self) -> None:
+        env = FinanceOpsEnv()
+        observation = env.reset("easy")
+        observation, reward, done, _ = env.step(Action(action_type="submit"))
+
+        self.assertTrue(done)
+        self.assertGreater(reward.score, 0.0)
+        self.assertLess(reward.score, 1.0)
+        self.assertEqual(observation.task_id, "invoice_extract_easy")
+
 
 if __name__ == "__main__":
     unittest.main()
