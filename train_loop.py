@@ -305,13 +305,14 @@ def run_episode(
 
 def train(difficulties: List[str], n_episodes: int, policy: str, resume: bool) -> Dict[str, Dict[str, float]]:
     qtable = QTable.load(QTABLE_PATH) if resume else QTable()
+    policy = policy.strip().lower()
+    if policy not in {"heuristic", "model"}:
+        raise ValueError("policy must be either 'heuristic' or 'model'")
+
     client = None
     model_name = os.getenv("MODEL_NAME", "deepseek-ai/DeepSeek-R1:fastest")
     if policy == "model":
-        try:
-            client = build_client()
-        except RuntimeError:
-            policy = "heuristic"
+        client = build_client()
 
     env = FinanceOpsEnv()
     results: Dict[str, List[float]] = {difficulty: [] for difficulty in difficulties}
@@ -358,7 +359,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="FinanceOps OpenEnv training loop")
     parser.add_argument("--task", choices=["easy", "medium", "hard", "all"], default="all")
     parser.add_argument("--episodes", type=int, default=500)
-    parser.add_argument("--policy", choices=["heuristic", "model"], default=os.getenv("POLICY", "heuristic"))
+    parser.add_argument("--policy", choices=["heuristic", "model"], default=os.getenv("POLICY", "model"))
     parser.add_argument("--resume", action="store_true")
     arguments = parser.parse_args()
 

@@ -13,31 +13,28 @@ from pydantic import ValidationError
 from env import Action, FinanceOpsEnv
 
 
-def _read_first_nonempty_line(path: str) -> str | None:
-    if not os.path.exists(path):
-        return None
-    with open(path, "r", encoding="utf-8") as handle:
-        for line in handle:
-            value = line.strip()
-            if value:
-                return value
-    return None
+def load_api_key() -> str | None:
+    return os.getenv("API_KEY") or os.getenv("HF_TOKEN")
 
 
-def _load_hf_token() -> str | None:
-    return (
-        os.getenv("HF_TOKEN")
-        or _read_first_nonempty_line("credential.txt")
-        or _read_first_nonempty_line(os.path.join("env", "credential.txt"))
-    )
+def get_api_base_url() -> str | None:
+    value = os.getenv("API_BASE_URL")
+    return value.strip() if value else None
 
 
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "deepseek-ai/DeepSeek-R1:fastest")
-HF_TOKEN = _load_hf_token()
+def get_model_name() -> str:
+    return os.getenv("MODEL_NAME", "deepseek-ai/DeepSeek-R1:fastest").strip()
+
+
+def resolve_baseline_mode() -> str:
+    mode = os.getenv("BASELINE_MODE", "model").strip().lower()
+    if mode not in {"heuristic", "model"}:
+        raise RuntimeError("BASELINE_MODE must be either 'heuristic' or 'model'")
+    return mode
+
+
 TASK_NAME = os.getenv("FINANCE_OPS_TASK", "invoice_extract_easy")
 BENCHMARK = os.getenv("FINANCE_OPS_BENCHMARK", "finance-ops-openenv")
-BASELINE_MODE = os.getenv("BASELINE_MODE", "heuristic").strip().lower()
 SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.1"))
 
 TASK_NAME_TO_DIFFICULTY = {
@@ -120,9 +117,13 @@ TASK_GUIDANCE = {
 
 
 def build_client() -> OpenAI:
-    if not HF_TOKEN:
-        raise RuntimeError("Set HF_TOKEN before running inference.py in model mode")
-    return OpenAI(api_key=HF_TOKEN, base_url=API_BASE_URL)
+    api_base_url = get_api_base_url()
+    api_key = load_api_key()
+    if not api_base_url:
+        raise RuntimeError("Set API_BASE_URL before running inference.py in model mode")
+    if not api_key:
+        raise RuntimeError("Set API_KEY before running inference.py in model mode")
+    return OpenAI(api_key=api_key, base_url=api_base_url)
 
 
 def log_start(task: str, env: str, model: str) -> None:
@@ -580,15 +581,20 @@ def resolve_difficulty(task_name: str) -> str:
 
 
 def main() -> None:
-    difficulty = resolve_difficulty(TASK_NAME)
-    client = build_client() if BASELINE_MODE == "model" else None
+    task_name = os.getenv("FINANCE_OPS_TASK", TASK_NAME)
+    benchmark = os.getenv("FINANCE_OPS_BENCHMARK", BENCHMARK)
+    success_score_threshold = float(os.getenv("SUCCESS_SCORE_THRESHOLD", str(SUCCESS_SCORE_THRESHOLD)))
+    model_name = get_model_name()
+    baseline_mode = resolve_baseline_mode()
+    difficulty = resolve_difficulty(task_name)
+    client = build_client() if baseline_mode == "model" else None
     env = FinanceOpsEnv()
     rewards: List[float] = []
     steps_taken = 0
     score = 0.0
     success = False
 
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+    log_start(task=task_name, env=benchmark, model=model_name)
 
     try:
         observation = env.reset(difficulty).model_dump()
@@ -596,7 +602,7 @@ def main() -> None:
         done = False
 
         while not done:
-            action = choose_action(client, MODEL_NAME, observation)
+            action = choose_action(client, model_name, observation)
             next_observation, reward, done, info = env.step(action)
 
             rewards.append(reward.score)
@@ -616,7 +622,7 @@ def main() -> None:
             if steps_taken > observation["max_steps"] + 1:
                 break
 
-        success = score >= SUCCESS_SCORE_THRESHOLD
+        success = score >= success_score_threshold
     except Exception as exc:
         print(f"[DEBUG] inference error: {exc}", file=sys.stderr, flush=True)
         success = False

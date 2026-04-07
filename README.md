@@ -56,11 +56,9 @@ Standout mechanics already implemented:
 ```text
 .
 |-- app.py
-|-- credential.txt                # optional local token file, gitignored
 |-- Dockerfile
 |-- env
 |   |-- __init__.py
-|   |-- credential.txt            # optional local token file, gitignored
 |   |-- data.py
 |   |-- environment.py
 |   |-- models.py
@@ -300,7 +298,7 @@ http://127.0.0.1:7860/web
 The root [inference.py](./inference.py) supports two modes:
 
 - `BASELINE_MODE=heuristic`
-- `BASELINE_MODE=model`
+- `BASELINE_MODE=model` (default)
 
 ### Heuristic Mode
 
@@ -308,20 +306,18 @@ This is the reproducible baseline path. It does not require a model call and is 
 
 ### Model Mode
 
-Model mode uses the OpenAI Python client against the Hugging Face router.
+Model mode uses the OpenAI Python client through the injected OpenAI-compatible proxy.
 
 Default config:
 
-- `API_BASE_URL=https://router.huggingface.co/v1`
 - `MODEL_NAME=deepseek-ai/DeepSeek-R1:fastest`
 
 Authentication:
 
-- primary: `HF_TOKEN` environment variable
-- local fallback: `credential.txt`
-- local fallback: `env/credential.txt`
+- primary: `API_KEY` environment variable
+- compatibility alias: `HF_TOKEN` environment variable
 
-That means you do not have to type the token every run if you keep it in one of the gitignored credential files.
+Submission runs should rely on the injected `API_BASE_URL` and `API_KEY`.
 
 ## Training Loop
 
@@ -479,7 +475,7 @@ Run the model baseline through the Hugging Face router:
 
 ```bash
 set BASELINE_MODE=model
-set HF_TOKEN=your_hf_token
+set API_KEY=your_hf_token
 set API_BASE_URL=https://router.huggingface.co/v1
 set MODEL_NAME=deepseek-ai/DeepSeek-R1:fastest
 set FINANCE_OPS_TASK=po_reconcile_hard
@@ -545,15 +541,7 @@ Verified on April 5, 2026:
 - local container health check on `http://127.0.0.1:7860/health` returns `200`
 - live Hugging Face Space endpoints `/reset`, `/health`, `/schema`, and `/web` return `200`
 - heuristic baseline mode is fully reproducible and does not require external credits
-- model mode is implemented correctly and connects through the OpenAI client using Hugging Face router variables; heavy multi-episode training still depends on external provider quota
-
-Use a credential file instead of exporting the token every run:
-
-```text
-credential.txt
-```
-
-Put only the token on the first non-empty line.
+- model mode is implemented correctly and connects through the OpenAI client using `API_BASE_URL` and `API_KEY`; heavy multi-episode training still depends on external provider quota
 
 ## Validation
 
@@ -603,7 +591,7 @@ Suggested steps:
 
 1. Create a new Hugging Face Space with Docker SDK.
 2. Push this repository.
-3. Add `HF_TOKEN` as a Space secret if you want model-mode inference there.
+3. Add `API_KEY` and `API_BASE_URL` as Space secrets or variables if you want model-mode inference there.
 4. The app will serve on port `7860`.
 5. Use `/web` for manual debugging and the API routes for integration testing.
 
@@ -618,7 +606,7 @@ Before submitting, confirm each of these once:
 3. `docker run -p 7860:7860 financeops-openenv` starts cleanly.
 4. Your Hugging Face Space returns HTTP 200 from `/reset`.
 5. The Space also serves `/health`, `/schema`, and `/web`.
-6. `HF_TOKEN`, `API_BASE_URL`, and `MODEL_NAME` are configured in Space secrets or variables.
+6. `API_KEY`, `API_BASE_URL`, and `MODEL_NAME` are configured in Space secrets or variables.
 7. This README includes final baseline scores and the public Space URL.
 
 ### Suggested Space Tags
@@ -634,14 +622,13 @@ For discoverability in the Hugging Face UI, add these tags in Space settings:
 The hackathon runner expects these variable names to exist in your configuration:
 
 - `API_BASE_URL`
+- `API_KEY`
 - `MODEL_NAME`
-- `HF_TOKEN`
 
-This repository already reads those names directly in [inference.py](./inference.py). For local heuristic runs, only `BASELINE_MODE=heuristic` is needed. For model-mode runs, set all three variables or provide the token through a gitignored credential file.
+This repository reads those names directly in [inference.py](./inference.py). For local heuristic runs, only `BASELINE_MODE=heuristic` is needed. For submission and model-mode runs, set `API_BASE_URL` and `API_KEY` so requests go through the provided proxy. `HF_TOKEN` is treated only as a local compatibility alias.
 
 ## Security Notes
 
-- `credential.txt` and `env/credential.txt` are gitignored.
 - Hugging Face tokens should be rotated if they have ever been pasted into chat, terminal history, or a committed file.
 - For deployment, prefer Hugging Face Space secrets or environment variables over plaintext files.
 
