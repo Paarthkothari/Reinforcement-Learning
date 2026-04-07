@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-SCORE_FLOOR = 0.0001
-SCORE_CEILING = 0.9999
+SCORE_FLOOR = 0.01
+SCORE_CEILING = 0.99
 
 
 def clamp_open_unit_interval(score: float) -> float:
