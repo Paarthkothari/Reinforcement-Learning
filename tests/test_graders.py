@@ -8,16 +8,16 @@ from env.tasks import grade_easy_submission, grade_hard_submission, grade_medium
 class GraderBoundsTests(unittest.TestCase):
     def test_easy_grader_bounds(self) -> None:
         score = grade_easy_submission({"vendor_name": "wrong"}, {"vendor_name": "right", "currency": "INR"})
-        self.assertGreaterEqual(score, 0.0)
-        self.assertLessEqual(score, 1.0)
+        self.assertGreater(score, 0.0)
+        self.assertLess(score, 1.0)
 
     def test_medium_grader_bounds(self) -> None:
         score = grade_medium_submission(
             flagged_issues=["invalid_invoice_date", "false_positive"],
             ground_truth=["invalid_invoice_date", "missing_gstin"],
         )
-        self.assertGreaterEqual(score, 0.0)
-        self.assertLessEqual(score, 1.0)
+        self.assertGreater(score, 0.0)
+        self.assertLess(score, 1.0)
 
     def test_hard_grader_bounds(self) -> None:
         score = grade_hard_submission(
@@ -30,8 +30,8 @@ class GraderBoundsTests(unittest.TestCase):
             ground_truth_discrepancies={"INV-1": "10.00"},
             ground_truth_duplicates=["INV-4"],
         )
-        self.assertGreaterEqual(score, 0.0)
-        self.assertLessEqual(score, 1.0)
+        self.assertGreater(score, 0.0)
+        self.assertLess(score, 1.0)
 
     def test_hard_grader_accepts_rich_discrepancy_payloads(self) -> None:
         score = grade_hard_submission(
@@ -47,8 +47,50 @@ class GraderBoundsTests(unittest.TestCase):
             },
             ground_truth_duplicates=["INV-5"],
         )
-        self.assertGreaterEqual(score, 0.0)
-        self.assertLessEqual(score, 1.0)
+        self.assertGreater(score, 0.0)
+        self.assertLess(score, 1.0)
+
+    def test_perfect_scores_are_kept_strictly_below_one(self) -> None:
+        easy_score = grade_easy_submission(
+            {"vendor_name": "Acme", "currency": "INR"},
+            {"vendor_name": "Acme", "currency": "INR"},
+        )
+        medium_score = grade_medium_submission(
+            flagged_issues=["invalid_invoice_date"],
+            ground_truth=["invalid_invoice_date"],
+        )
+        hard_score = grade_hard_submission(
+            predicted_matches={"INV-1": "PO-1"},
+            predicted_unmatched=["INV-2"],
+            predicted_discrepancies=["INV-3"],
+            predicted_duplicates=["INV-4"],
+            ground_truth_matches={"INV-1": "PO-1"},
+            ground_truth_unmatched=["INV-2"],
+            ground_truth_discrepancies={"INV-3": "10.00"},
+            ground_truth_duplicates=["INV-4"],
+        )
+
+        self.assertLess(easy_score, 1.0)
+        self.assertLess(medium_score, 1.0)
+        self.assertLess(hard_score, 1.0)
+
+    def test_empty_scores_are_kept_strictly_above_zero(self) -> None:
+        easy_score = grade_easy_submission({}, {"vendor_name": "Acme"})
+        medium_score = grade_medium_submission(flagged_issues=[], ground_truth=["invalid_invoice_date"])
+        hard_score = grade_hard_submission(
+            predicted_matches={},
+            predicted_unmatched=[],
+            predicted_discrepancies=[],
+            predicted_duplicates=[],
+            ground_truth_matches={"INV-1": "PO-1"},
+            ground_truth_unmatched=["INV-2"],
+            ground_truth_discrepancies={"INV-3": "10.00"},
+            ground_truth_duplicates=["INV-4"],
+        )
+
+        self.assertGreater(easy_score, 0.0)
+        self.assertGreater(medium_score, 0.0)
+        self.assertGreater(hard_score, 0.0)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Dict, Iterable
 
+from .scoring import clamp_open_unit_interval
+
 
 def grade_hard_submission(
     predicted_matches: Dict[str, str],
@@ -63,4 +65,4 @@ def grade_hard_submission(
         + (0.2 * discrepancy_score)
         + (0.15 * duplicate_score)
     )
-    return round(max(0.0, min(1.0, weighted_score)), 4)
+    return clamp_open_unit_interval(max(0.0, min(1.0, weighted_score)))
