@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 
-from env.tasks import grade_easy_submission, grade_hard_submission, grade_medium_submission
+from env.tasks import (
+    grade_easy_submission,
+    grade_easy_task,
+    grade_hard_submission,
+    grade_hard_task,
+    grade_medium_submission,
+    grade_medium_task,
+)
 
 
 class GraderBoundsTests(unittest.TestCase):
@@ -91,6 +99,42 @@ class GraderBoundsTests(unittest.TestCase):
         self.assertGreater(easy_score, 0.0)
         self.assertGreater(medium_score, 0.0)
         self.assertGreater(hard_score, 0.0)
+
+    def test_manifest_graders_use_standard_two_argument_signature(self) -> None:
+        self.assertEqual(len(inspect.signature(grade_easy_task).parameters), 2)
+        self.assertEqual(len(inspect.signature(grade_medium_task).parameters), 2)
+        self.assertEqual(len(inspect.signature(grade_hard_task).parameters), 2)
+
+    def test_manifest_graders_accept_structured_payloads(self) -> None:
+        easy_score = grade_easy_task(
+            {"current_submission": {"vendor_name": "Acme", "currency": "INR"}},
+            {"ground_truth": {"vendor_name": "Acme", "currency": "INR"}},
+        )
+        medium_score = grade_medium_task(
+            {"flagged_issues": ["invalid_invoice_date"]},
+            {"issues": ["invalid_invoice_date"]},
+        )
+        hard_score = grade_hard_task(
+            {
+                "current_matches": {"INV-1": "PO-1"},
+                "current_unmatched_invoices": ["INV-2"],
+                "current_flagged_discrepancies": ["INV-3"],
+                "current_flagged_duplicate_invoices": ["INV-4"],
+            },
+            {
+                "matches": {"INV-1": "PO-1"},
+                "unmatched_invoices": ["INV-2"],
+                "discrepancies": {"INV-3": "10.00"},
+                "duplicate_invoices": ["INV-4"],
+            },
+        )
+
+        self.assertGreater(easy_score, 0.0)
+        self.assertLess(easy_score, 1.0)
+        self.assertGreater(medium_score, 0.0)
+        self.assertLess(medium_score, 1.0)
+        self.assertGreater(hard_score, 0.0)
+        self.assertLess(hard_score, 1.0)
 
 
 if __name__ == "__main__":

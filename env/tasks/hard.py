@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Iterable
+from typing import Any, Dict, Iterable
 
 from .scoring import clamp_open_unit_interval
 
@@ -66,3 +66,81 @@ def grade_hard_submission(
         + (0.15 * duplicate_score)
     )
     return clamp_open_unit_interval(max(0.0, min(1.0, weighted_score)))
+
+
+def _first_present(payload: Dict[str, Any], *keys: str, default: Any) -> Any:
+    for key in keys:
+        if key in payload and payload[key] is not None:
+            return payload[key]
+    return default
+
+
+def grade_hard_task(agent_output: Dict[str, Any], ground_truth: Dict[str, Any]) -> float:
+    predicted_matches = _first_present(
+        agent_output,
+        "predicted_matches",
+        "matches",
+        "current_matches",
+        default={},
+    )
+    predicted_unmatched = _first_present(
+        agent_output,
+        "predicted_unmatched",
+        "unmatched_invoices",
+        "current_unmatched_invoices",
+        default=[],
+    )
+    predicted_discrepancies = set(
+        _first_present(
+            agent_output,
+            "predicted_discrepancies",
+            "flagged_discrepancies",
+            "current_flagged_discrepancies",
+            default=[],
+        )
+    )
+    predicted_discrepancies.update(
+        _first_present(
+            agent_output,
+            "predicted_split_flags",
+            "flagged_split_invoices",
+            "current_flagged_split_invoices",
+            default=[],
+        )
+    )
+    predicted_duplicates = _first_present(
+        agent_output,
+        "predicted_duplicates",
+        "duplicate_invoices",
+        "flagged_duplicate_invoices",
+        "current_flagged_duplicate_invoices",
+        default=[],
+    )
+
+    expected_matches = _first_present(ground_truth, "matches", default={})
+    expected_unmatched = _first_present(
+        ground_truth,
+        "unmatched_invoices",
+        default=[],
+    )
+    expected_discrepancies = _first_present(
+        ground_truth,
+        "discrepancies",
+        default={},
+    )
+    expected_duplicates = _first_present(
+        ground_truth,
+        "duplicate_invoices",
+        default=[],
+    )
+
+    return grade_hard_submission(
+        predicted_matches=dict(predicted_matches or {}),
+        predicted_unmatched=list(predicted_unmatched or []),
+        predicted_discrepancies=list(predicted_discrepancies),
+        predicted_duplicates=list(predicted_duplicates or []),
+        ground_truth_matches=dict(expected_matches or {}),
+        ground_truth_unmatched=list(expected_unmatched or []),
+        ground_truth_discrepancies=dict(expected_discrepancies or {}),
+        ground_truth_duplicates=list(expected_duplicates or []),
+    )

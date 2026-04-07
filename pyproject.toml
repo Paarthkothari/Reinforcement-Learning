@@ -15,6 +15,11 @@ dependencies = [
 [project.scripts]
 server = "server.app:main"
 
+[tool.setuptools]
+include-package-data = true
+packages = ["env", "env.tasks", "server"]
+py-modules = ["app", "inference", "train_loop", "analyze_training", "__init__"]
+
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"

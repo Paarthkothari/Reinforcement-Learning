@@ -1,0 +1,5 @@
+include README.md
+include openenv.yaml
+recursive-include env *.py
+recursive-include server *.py
+recursive-include tests *.py
