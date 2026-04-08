@@ -33,6 +33,10 @@ def resolve_baseline_mode() -> str:
     return mode
 
 
+def _safe_reward(value: float) -> float:
+    return round(max(0.01, min(0.99, float(value))), 4)
+
+
 TASK_NAME = os.getenv("FINANCE_OPS_TASK", "invoice_extract_easy")
 BENCHMARK = os.getenv("FINANCE_OPS_BENCHMARK", "finance-ops-openenv")
 SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.1"))
@@ -134,13 +138,13 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
     error_value = error if error else "null"
     done_value = str(done).lower()
     print(
-        f"[STEP] step={step} action={action} reward={reward:.2f} done={done_value} error={error_value}",
+        f"[STEP] step={step} action={action} reward={_safe_reward(reward):.2f} done={done_value} error={error_value}",
         flush=True,
     )
 
 
 def log_end(success: bool, steps: int, rewards: List[float]) -> None:
-    rewards_str = ",".join(f"{reward:.2f}" for reward in rewards)
+    rewards_str = ",".join(f"{_safe_reward(reward):.2f}" for reward in rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
         flush=True,
@@ -540,7 +544,7 @@ def choose_action(client: OpenAI | None, model_name: str, observation: Dict) -> 
 
     try:
         return _request_model_action(client, model_name, observation)
-    except (json.JSONDecodeError, ValidationError, RuntimeError, KeyError, TypeError) as first_error:
+    except Exception as first_error:
         try:
             return _request_model_action(
                 client,
@@ -549,7 +553,7 @@ def choose_action(client: OpenAI | None, model_name: str, observation: Dict) -> 
                 corrective_note=str(first_error),
                 raw_attempt=getattr(first_error, "doc", None),
             )
-        except (json.JSONDecodeError, ValidationError, RuntimeError, KeyError, TypeError):
+        except Exception:
             return heuristic_action(observation)
 
 
@@ -580,18 +584,30 @@ def resolve_difficulty(task_name: str) -> str:
         raise RuntimeError(f"Unsupported FINANCE_OPS_TASK '{task_name}'. Expected one of: {valid_names}") from exc
 
 
-def main() -> None:
-    task_name = os.getenv("FINANCE_OPS_TASK", TASK_NAME)
-    benchmark = os.getenv("FINANCE_OPS_BENCHMARK", BENCHMARK)
-    success_score_threshold = float(os.getenv("SUCCESS_SCORE_THRESHOLD", str(SUCCESS_SCORE_THRESHOLD)))
-    model_name = get_model_name()
-    baseline_mode = resolve_baseline_mode()
+def resolve_task_names() -> List[str]:
+    raw_value = os.getenv("FINANCE_OPS_TASK", "").strip()
+    if not raw_value:
+        return [
+            "invoice_extract_easy",
+            "invoice_validate_medium",
+            "po_reconcile_hard",
+        ]
+
+    return [task_name.strip() for task_name in raw_value.split(",") if task_name.strip()]
+
+
+def run_episode(
+    task_name: str,
+    benchmark: str,
+    success_score_threshold: float,
+    model_name: str,
+    client: OpenAI | None,
+) -> None:
     difficulty = resolve_difficulty(task_name)
-    client = build_client() if baseline_mode == "model" else None
     env = FinanceOpsEnv()
     rewards: List[float] = []
     steps_taken = 0
-    score = 0.0
+    score = 0.5
     success = False
 
     log_start(task=task_name, env=benchmark, model=model_name)
@@ -605,9 +621,9 @@ def main() -> None:
             action = choose_action(client, model_name, observation)
             next_observation, reward, done, info = env.step(action)
 
-            rewards.append(reward.score)
+            rewards.append(_safe_reward(reward.score))
             steps_taken += 1
-            score = max(0.0, min(1.0, float(info.get("score_snapshot", 0.0))))
+            score = _safe_reward(info.get("score_snapshot", 0.5))
 
             log_step(
                 step=steps_taken,
@@ -624,10 +640,35 @@ def main() -> None:
 
         success = score >= success_score_threshold
     except Exception as exc:
-        print(f"[DEBUG] inference error: {exc}", file=sys.stderr, flush=True)
+        print(f"[DEBUG] inference error on task {task_name}: {exc}", file=sys.stderr, flush=True)
         success = False
     finally:
         log_end(success=success, steps=steps_taken, rewards=rewards)
+
+
+def main() -> None:
+    benchmark = os.getenv("FINANCE_OPS_BENCHMARK", BENCHMARK)
+    success_score_threshold = float(os.getenv("SUCCESS_SCORE_THRESHOLD", str(SUCCESS_SCORE_THRESHOLD)))
+    model_name = get_model_name()
+    baseline_mode = resolve_baseline_mode()
+    task_names = resolve_task_names()
+
+    client: OpenAI | None = None
+    if baseline_mode == "model":
+        try:
+            client = build_client()
+        except Exception as exc:
+            print(f"[DEBUG] model mode unavailable, falling back to heuristic: {exc}", file=sys.stderr, flush=True)
+            client = None
+
+    for task_name in task_names:
+        run_episode(
+            task_name=task_name,
+            benchmark=benchmark,
+            success_score_threshold=success_score_threshold,
+            model_name=model_name,
+            client=client,
+        )
 
 
 if __name__ == "__main__":

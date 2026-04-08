@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from inference import build_client, load_api_key, resolve_baseline_mode
+from inference import build_client, load_api_key, resolve_baseline_mode, resolve_task_names, _safe_reward
 
 
 class InferenceConfigTests(unittest.TestCase):
@@ -49,6 +49,22 @@ class InferenceConfigTests(unittest.TestCase):
         with patch.dict(os.environ, {"API_BASE_URL": "https://proxy.example/v1"}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "API_KEY"):
                 build_client()
+
+    def test_resolve_task_names_defaults_to_all_three_tasks(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                resolve_task_names(),
+                [
+                    "invoice_extract_easy",
+                    "invoice_validate_medium",
+                    "po_reconcile_hard",
+                ],
+            )
+
+    def test_safe_reward_clamps_to_two_decimal_safe_interval(self) -> None:
+        self.assertEqual(_safe_reward(0.0), 0.01)
+        self.assertEqual(_safe_reward(1.0), 0.99)
+        self.assertEqual(_safe_reward(0.5), 0.5)
 
 
 if __name__ == "__main__":

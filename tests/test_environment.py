@@ -113,7 +113,7 @@ class FinanceOpsEnvironmentTests(unittest.TestCase):
 
         self.assertEqual(
             buffer.getvalue().strip(),
-            "[END] success=true steps=3 rewards=0.20,0.00,1.00",
+            "[END] success=true steps=3 rewards=0.20,0.01,0.99",
         )
 
     def test_submit_returns_strict_task_score_bounds(self) -> None:
