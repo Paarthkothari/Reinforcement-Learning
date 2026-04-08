@@ -60,7 +60,7 @@ class FinanceOpsEnvironmentTests(unittest.TestCase):
         _, reward, done, info = env.step(Action(action_type="flag"))
 
         self.assertFalse(done)
-        self.assertEqual(reward.score, 0.0)
+        self.assertEqual(reward.score, 0.01)
         self.assertEqual(info["last_action_error"], "missing_issue_code")
 
     def test_generate_task_is_deterministic_for_same_episode_index(self) -> None:
@@ -96,7 +96,7 @@ class FinanceOpsEnvironmentTests(unittest.TestCase):
         for _ in range(6):
             _, reward, done, _ = env.step(Action(action_type="skip"))
             self.assertFalse(done)
-            self.assertAlmostEqual(reward.score, 0.0, places=4)
+            self.assertAlmostEqual(reward.score, 0.01, places=4)
 
         _, reward, done, _ = env.step(
             Action(action_type="match", invoice_id=first_invoice_id, po_id=first_po_id)
@@ -124,6 +124,17 @@ class FinanceOpsEnvironmentTests(unittest.TestCase):
         self.assertGreater(reward.score, 0.0)
         self.assertLess(reward.score, 1.0)
         self.assertEqual(observation.task_id, "invoice_extract_easy")
+
+    def test_invalid_step_rewards_also_stay_inside_open_interval(self) -> None:
+        env = FinanceOpsEnv()
+        env.reset("easy")
+        _, reward, done, _ = env.step(
+            Action(action_type="extract", field_name="vendor_name", field_value="wrong")
+        )
+
+        self.assertFalse(done)
+        self.assertGreater(reward.score, 0.0)
+        self.assertLess(reward.score, 1.0)
 
 
 if __name__ == "__main__":

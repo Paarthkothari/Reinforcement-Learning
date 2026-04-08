@@ -30,7 +30,7 @@ class FinanceOpsEnv:
 
     @staticmethod
     def _reward(score: float, reason: str, partial_credit: float = 0.0) -> Reward:
-        bounded_score = max(0.0, min(1.0, score))
+        bounded_score = clamp_open_unit_interval(score)
         bounded_partial_credit = max(0.0, min(1.0, partial_credit))
         return Reward(score=bounded_score, reason=reason, partial_credit=bounded_partial_credit)
 
