@@ -47,6 +47,16 @@ class AppContractTests(unittest.TestCase):
             self.assertGreater(low, 0.0)
             self.assertLess(high, 1.0)
 
+    def test_schema_reward_bounds_are_strictly_open_interval(self) -> None:
+        response = self.client.get("/schema")
+        self.assertEqual(response.status_code, 200)
+        reward_schema = response.json()["reward"]["properties"]
+
+        self.assertEqual(reward_schema["score"]["exclusiveMinimum"], 0.0)
+        self.assertEqual(reward_schema["score"]["exclusiveMaximum"], 1.0)
+        self.assertEqual(reward_schema["partial_credit"]["exclusiveMinimum"], 0.0)
+        self.assertEqual(reward_schema["partial_credit"]["exclusiveMaximum"], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

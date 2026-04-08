@@ -61,6 +61,7 @@ class FinanceOpsEnvironmentTests(unittest.TestCase):
 
         self.assertFalse(done)
         self.assertEqual(reward.score, 0.01)
+        self.assertEqual(reward.partial_credit, 0.01)
         self.assertEqual(info["last_action_error"], "missing_issue_code")
 
     def test_generate_task_is_deterministic_for_same_episode_index(self) -> None:
@@ -135,6 +136,8 @@ class FinanceOpsEnvironmentTests(unittest.TestCase):
         self.assertFalse(done)
         self.assertGreater(reward.score, 0.0)
         self.assertLess(reward.score, 1.0)
+        self.assertGreater(reward.partial_credit, 0.0)
+        self.assertLess(reward.partial_credit, 1.0)
 
 
 if __name__ == "__main__":

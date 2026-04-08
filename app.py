@@ -7,7 +7,7 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from env import Action, FinanceOpsEnv, Observation
+from env import Action, FinanceOpsEnv, Observation, Reward
 
 app = FastAPI(title="FinanceOps OpenEnv", version="1.0.0")
 env = FinanceOpsEnv()
@@ -189,6 +189,7 @@ def schema() -> dict:
         "version": "1.0.0",
         "action": Action.model_json_schema(),
         "observation": Observation.model_json_schema(),
+        "reward": Reward.model_json_schema(),
         "state": {"type": "object"},
         "tasks": TASK_MANIFEST,
     }
