@@ -40,10 +40,15 @@ class InferenceConfigTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(resolve_baseline_mode(), "model")
 
-    def test_build_client_requires_api_base_url(self) -> None:
+    def test_build_client_uses_default_api_base_url(self) -> None:
         with patch.dict(os.environ, {"API_KEY": "proxy-key"}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "API_BASE_URL"):
+            with patch("inference.OpenAI") as mock_openai:
                 build_client()
+
+        mock_openai.assert_called_once_with(
+            api_key="proxy-key",
+            base_url="https://router.huggingface.co/v1",
+        )
 
     def test_build_client_requires_api_key(self) -> None:
         with patch.dict(os.environ, {"API_BASE_URL": "https://proxy.example/v1"}, clear=True):

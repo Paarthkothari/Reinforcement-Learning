@@ -18,8 +18,7 @@ def load_api_key() -> str | None:
 
 
 def get_api_base_url() -> str | None:
-    value = os.getenv("API_BASE_URL")
-    return value.strip() if value else None
+    return os.getenv("API_BASE_URL", "https://router.huggingface.co/v1").strip()
 
 
 def get_model_name() -> str:
@@ -143,10 +142,10 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
     )
 
 
-def log_end(success: bool, steps: int, rewards: List[float]) -> None:
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{_safe_reward(reward):.2f}" for reward in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} score={_safe_reward(score):.2f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -643,7 +642,18 @@ def run_episode(
         print(f"[DEBUG] inference error on task {task_name}: {exc}", file=sys.stderr, flush=True)
         success = False
     finally:
-        log_end(success=success, steps=steps_taken, rewards=rewards)
+        if not rewards:
+            try:
+                last_reward = getattr(env, "last_reward", None)
+                if last_reward is not None and getattr(last_reward, "score", None) is not None:
+                    fallback = _safe_reward(last_reward.score)
+                else:
+                    fallback = _safe_reward(env._current_score_snapshot())
+            except Exception:
+                fallback = _safe_reward(0.5)
+            rewards.append(fallback)
+
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 def main() -> None:
