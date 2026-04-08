@@ -13,6 +13,30 @@ app = FastAPI(title="FinanceOps OpenEnv", version="1.0.0")
 env = FinanceOpsEnv()
 env.reset("easy")
 
+TASK_MANIFEST = [
+    {
+        "id": "invoice_extract_easy",
+        "difficulty": "easy",
+        "description": "Extract five required fields from a clean SMB invoice.",
+        "grader": "env.tasks.easy:grade_easy_task",
+        "reward_range": [0.01, 0.99],
+    },
+    {
+        "id": "invoice_validate_medium",
+        "difficulty": "medium",
+        "description": "Flag anomalies in a faulty invoice with partial credit and false-positive penalties.",
+        "grader": "env.tasks.medium:grade_medium_task",
+        "reward_range": [0.01, 0.99],
+    },
+    {
+        "id": "po_reconcile_hard",
+        "difficulty": "hard",
+        "description": "Match invoices to purchase orders across currencies, flag unmatched and split-PO invoices, and detect amount mismatches.",
+        "grader": "env.tasks.hard:grade_hard_task",
+        "reward_range": [0.01, 0.99],
+    },
+]
+
 
 class ResetRequest(BaseModel):
     difficulty: str = "easy"
@@ -146,19 +170,27 @@ def health() -> dict:
 def metadata() -> dict:
     return {
         "name": "finance-ops-openenv",
+        "version": "1.0.0",
+        "runtime": "fastapi",
+        "entrypoint": "env.environment:FinanceOpsEnv",
+        "app": "server.app:app",
         "description": (
             "OpenEnv-compatible finance operations environment for invoice extraction, "
             "validation, and PO reconciliation."
         ),
+        "tasks": TASK_MANIFEST,
     }
 
 
 @app.get("/schema")
 def schema() -> dict:
     return {
+        "name": "finance-ops-openenv",
+        "version": "1.0.0",
         "action": Action.model_json_schema(),
         "observation": Observation.model_json_schema(),
         "state": {"type": "object"},
+        "tasks": TASK_MANIFEST,
     }
 
 
