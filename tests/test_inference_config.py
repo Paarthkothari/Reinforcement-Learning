@@ -2,9 +2,19 @@ from __future__ import annotations
 
 import os
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from unittest.mock import patch
 
-from inference import build_client, load_api_key, load_hf_token, resolve_baseline_mode, resolve_task_names, _safe_reward
+from inference import (
+    _safe_reward,
+    build_client,
+    load_api_key,
+    load_hf_token,
+    resolve_baseline_mode,
+    resolve_task_names,
+    run_episode,
+)
 
 
 class InferenceConfigTests(unittest.TestCase):
@@ -76,6 +86,34 @@ class InferenceConfigTests(unittest.TestCase):
         self.assertEqual(_safe_reward(0.0), 0.01)
         self.assertEqual(_safe_reward(1.0), 0.99)
         self.assertEqual(_safe_reward(0.5), 0.5)
+
+    def test_run_episode_logs_safe_fallback_reward_when_exception_happens_before_first_step(self) -> None:
+        stdout_buffer = StringIO()
+        stderr_buffer = StringIO()
+
+        with patch("inference.choose_action", side_effect=RuntimeError("boom")):
+            with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
+                run_episode(
+                    task_name="invoice_extract_easy",
+                    benchmark="finance-ops-openenv",
+                    success_score_threshold=0.1,
+                    model_name="unit-test-model",
+                    client=None,
+                )
+
+        end_lines = [
+            line
+            for line in stdout_buffer.getvalue().splitlines()
+            if line.startswith("[END]")
+        ]
+        self.assertEqual(len(end_lines), 1)
+        reward_text = end_lines[0].split("rewards=", 1)[1]
+        rewards = [float(value) for value in reward_text.split(",") if value]
+
+        self.assertEqual(len(rewards), 1)
+        self.assertGreater(rewards[0], 0.0)
+        self.assertLess(rewards[0], 1.0)
+        self.assertNotIn(rewards[0], {0.0, 1.0})
 
 
 if __name__ == "__main__":

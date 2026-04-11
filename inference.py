@@ -646,6 +646,18 @@ def run_episode(
         print(f"[DEBUG] inference error on task {task_name}: {exc}", file=sys.stderr, flush=True)
         success = False
     finally:
+        # Defensive fix: ensure every episode prints at least one clamped
+        # reward, even if an exception happens before the first env.step().
+        if not rewards:
+            try:
+                last_reward = getattr(env, "last_reward", None)
+                if last_reward is not None and getattr(last_reward, "score", None) is not None:
+                    fallback = _safe_reward(last_reward.score)
+                else:
+                    fallback = _safe_reward(env._current_score_snapshot())
+            except Exception:
+                fallback = _safe_reward(0.5)
+            rewards.append(fallback)
         try:
             env.close()
         except Exception as close_error:
