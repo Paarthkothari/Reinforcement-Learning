@@ -563,6 +563,12 @@ You can also validate the strict stdout contract locally:
 python inference.py | python validate_output.py
 ```
 
+For CI or local smoke checks without live model credits, run the same contract test in heuristic mode:
+
+```bash
+BASELINE_MODE=heuristic python inference.py | python validate_output.py
+```
+
 ## Docker
 
 Build locally:
@@ -602,6 +608,7 @@ Suggested steps:
 5. Use `/web` for manual debugging and the API routes for integration testing.
 
 Do not commit credential files or hardcode tokens in source.
+If a token has been pasted into chat, terminal history, or a local scratch file, rotate it before submission and update the Space secret.
 
 ### Final Deployment Checklist
 
