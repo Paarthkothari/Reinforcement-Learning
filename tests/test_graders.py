@@ -136,6 +136,68 @@ class GraderBoundsTests(unittest.TestCase):
         self.assertGreater(hard_score, 0.0)
         self.assertLess(hard_score, 1.0)
 
+    def test_manifest_graders_accept_full_generated_task_payloads(self) -> None:
+        from env.data import generate_task
+
+        easy_task = generate_task("easy", episode_index=0)
+        medium_task = generate_task("medium", episode_index=0)
+        hard_task = generate_task("hard", episode_index=0)
+
+        easy_score = grade_easy_task(
+            {"content": {"current_submission": easy_task["ground_truth"]}},
+            easy_task,
+        )
+        medium_score = grade_medium_task(
+            {"content": {"flagged_issues": medium_task["ground_truth"]["issues"]}},
+            medium_task,
+        )
+        hard_score = grade_hard_task(
+            {
+                "content": {
+                    "current_matches": hard_task["ground_truth"]["matches"],
+                    "current_unmatched_invoices": hard_task["ground_truth"]["unmatched_invoices"],
+                    "current_flagged_discrepancies": list(hard_task["ground_truth"]["discrepancies"].keys()),
+                    "current_flagged_duplicate_invoices": hard_task["ground_truth"]["duplicate_invoices"],
+                }
+            },
+            hard_task,
+        )
+
+        self.assertGreater(easy_score, 0.0)
+        self.assertLess(easy_score, 1.0)
+        self.assertGreater(medium_score, 0.0)
+        self.assertLess(medium_score, 1.0)
+        self.assertGreater(hard_score, 0.0)
+        self.assertLess(hard_score, 1.0)
+
+    def test_manifest_graders_stay_safe_when_rounded_to_one_decimal(self) -> None:
+        easy_score = grade_easy_task(
+            {"current_submission": {"vendor_name": "Acme", "currency": "INR"}},
+            {"ground_truth": {"vendor_name": "Acme", "currency": "INR"}},
+        )
+        medium_score = grade_medium_task(
+            {"flagged_issues": []},
+            {"issues": ["invalid_invoice_date"]},
+        )
+        hard_score = grade_hard_task(
+            {
+                "current_matches": {"INV-1": "PO-1"},
+                "current_unmatched_invoices": ["INV-2"],
+                "current_flagged_discrepancies": ["INV-3"],
+                "current_flagged_duplicate_invoices": ["INV-4"],
+            },
+            {
+                "matches": {"INV-1": "PO-1"},
+                "unmatched_invoices": ["INV-2"],
+                "discrepancies": {"INV-3": "10.00"},
+                "duplicate_invoices": ["INV-4"],
+            },
+        )
+
+        self.assertNotIn(round(easy_score, 1), {0.0, 1.0})
+        self.assertNotIn(round(medium_score, 1), {0.0, 1.0})
+        self.assertNotIn(round(hard_score, 1), {0.0, 1.0})
+
 
 if __name__ == "__main__":
     unittest.main()

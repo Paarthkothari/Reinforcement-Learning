@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable
 
-from .scoring import clamp_open_unit_interval
+from .scoring import clamp_open_unit_interval, normalize_manifest_task_score
 
 
 def grade_hard_submission(
@@ -72,6 +72,16 @@ def _first_present(payload: Dict[str, Any], *keys: str, default: Any) -> Any:
     for key in keys:
         if key in payload and payload[key] is not None:
             return payload[key]
+    content = payload.get("content")
+    if isinstance(content, dict):
+        for key in keys:
+            if key in content and content[key] is not None:
+                return content[key]
+    nested_ground_truth = payload.get("ground_truth")
+    if isinstance(nested_ground_truth, dict):
+        for key in keys:
+            if key in nested_ground_truth and nested_ground_truth[key] is not None:
+                return nested_ground_truth[key]
     return default
 
 
@@ -134,7 +144,7 @@ def grade_hard_task(agent_output: Dict[str, Any], ground_truth: Dict[str, Any]) 
         default=[],
     )
 
-    return grade_hard_submission(
+    score = grade_hard_submission(
         predicted_matches=dict(predicted_matches or {}),
         predicted_unmatched=list(predicted_unmatched or []),
         predicted_discrepancies=list(predicted_discrepancies),
@@ -144,3 +154,4 @@ def grade_hard_task(agent_output: Dict[str, Any], ground_truth: Dict[str, Any]) 
         ground_truth_discrepancies=dict(expected_discrepancies or {}),
         ground_truth_duplicates=list(expected_duplicates or []),
     )
+    return normalize_manifest_task_score(score)
