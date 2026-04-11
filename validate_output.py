@@ -10,7 +10,8 @@ STEP_RE = re.compile(
     r"done=(?P<done>true|false) error=(?P<error>.*)$"
 )
 END_RE = re.compile(
-    r"^\[END\] success=(?P<success>true|false) steps=(?P<steps>\d+) rewards=(?P<rewards>(\d+\.\d{2})(,\d+\.\d{2})*|)$"
+    r"^\[END\] success=(?P<success>true|false) steps=(?P<steps>\d+) "
+    r"score=(?P<score>\d+\.\d{2}) rewards=(?P<rewards>(\d+\.\d{2})(,\d+\.\d{2})*|)$"
 )
 
 

@@ -109,11 +109,11 @@ class FinanceOpsEnvironmentTests(unittest.TestCase):
     def test_log_end_matches_required_contract(self) -> None:
         buffer = StringIO()
         with redirect_stdout(buffer):
-            log_end(success=True, steps=3, rewards=[0.2, 0.0, 1.0])
+            log_end(success=True, steps=3, score=1.0, rewards=[0.2, 0.0, 1.0])
 
         self.assertEqual(
             buffer.getvalue().strip(),
-            "[END] success=true steps=3 rewards=0.20,0.01,0.99",
+            "[END] success=true steps=3 score=0.99 rewards=0.20,0.01,0.99",
         )
 
     def test_environment_exposes_close_for_evaluator_lifecycle(self) -> None:

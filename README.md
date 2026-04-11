@@ -395,7 +395,7 @@ These are fresh heuristic-mode runs from the current branch and reflect the exac
 [STEP] step=4 action=extract('currency','INR') reward=0.20 done=false error=null
 [STEP] step=5 action=extract('total_amount','2194.71') reward=0.20 done=false error=null
 [STEP] step=6 action=submit() reward=0.90 done=true error=null
-[END] success=true steps=6 rewards=0.20,0.20,0.20,0.20,0.20,0.90
+[END] success=true steps=6 score=0.99 rewards=0.20,0.20,0.20,0.20,0.20,0.90
 ```
 
 ## Inference Output Contract
@@ -405,7 +405,7 @@ The script emits evaluator-facing lines in this exact evaluator-facing format:
 ```text
 [START] task=<task_name> env=<benchmark> model=<model_name>
 [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
-[END]   success=<true|false> steps=<n> rewards=<r1,r2,...,rn>
+[END]   success=<true|false> steps=<n> score=<0.00> rewards=<r1,r2,...,rn>
 ```
 
 This format is intentionally stable for evaluation. Even when the environment becomes more realistic, the stdout format should remain evaluator-safe.
@@ -420,7 +420,7 @@ Example:
 [STEP] step=4 action=extract('currency','INR') reward=0.20 done=false error=null
 [STEP] step=5 action=extract('total_amount','13983.00') reward=0.20 done=false error=null
 [STEP] step=6 action=submit() reward=0.90 done=true error=null
-[END] success=true steps=6 rewards=0.20,0.20,0.20,0.20,0.20,0.90
+[END] success=true steps=6 score=0.99 rewards=0.20,0.20,0.20,0.20,0.20,0.90
 ```
 
 ## Running Locally

@@ -146,10 +146,10 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
     )
 
 
-def log_end(success: bool, steps: int, rewards: List[float]) -> None:
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{_safe_reward(reward):.2f}" for reward in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} score={_safe_reward(score):.2f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -663,7 +663,7 @@ def run_episode(
             env.close()
         except Exception as close_error:
             print(f"[DEBUG] env.close() failed for task {task_name}: {close_error}", file=sys.stderr, flush=True)
-        log_end(success=success, steps=steps_taken, rewards=clamped_rewards)
+        log_end(success=success, steps=steps_taken, score=score, rewards=clamped_rewards)
 
 
 def main() -> None:
