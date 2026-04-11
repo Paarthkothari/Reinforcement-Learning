@@ -116,7 +116,7 @@ class InferenceConfigTests(unittest.TestCase):
         self.assertLess(rewards[0], 1.0)
         self.assertNotIn(rewards[0], {0.0, 1.0})
 
-    def test_run_episode_uses_raw_score_snapshot_for_success_threshold(self) -> None:
+    def test_run_episode_uses_score_snapshot_for_success_threshold(self) -> None:
         stdout_buffer = StringIO()
         stderr_buffer = StringIO()
 

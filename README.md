@@ -208,9 +208,6 @@ Why this is difficult:
 - repeated actions and late actions reduce the quality of the episode outcome
 
 All graders are deterministic and return values in `0.0..1.0`.
-Validator-facing task scores exposed through the manifest and runtime `score_snapshot`
-are normalized into a safer `0.1..0.9` band, while per-step rewards remain inside
-the stricter open interval used by the environment itself.
 
 ## Environment Design
 

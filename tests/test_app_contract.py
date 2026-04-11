@@ -44,8 +44,8 @@ class AppContractTests(unittest.TestCase):
         self.assertEqual(len(tasks), 3)
         for task in tasks:
             low, high = task["reward_range"]
-            self.assertEqual(low, 0.1)
-            self.assertEqual(high, 0.9)
+            self.assertEqual(low, 0.01)
+            self.assertEqual(high, 0.99)
 
     def test_schema_reward_bounds_are_strictly_open_interval(self) -> None:
         response = self.client.get("/schema")

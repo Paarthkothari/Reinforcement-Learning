@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Set
 
-from .scoring import clamp_open_unit_interval, normalize_manifest_task_score
+from .scoring import clamp_open_unit_interval
 
 
 def grade_medium_submission(flagged_issues: Iterable[str], ground_truth: Iterable[str]) -> float:
@@ -38,5 +38,4 @@ def grade_medium_task(agent_output: Any, ground_truth: Any) -> float:
             or []
         )
 
-    score = grade_medium_submission(predicted or [], expected or [])
-    return normalize_manifest_task_score(score)
+    return grade_medium_submission(predicted or [], expected or [])

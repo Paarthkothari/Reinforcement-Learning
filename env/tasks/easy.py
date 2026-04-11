@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from .scoring import clamp_open_unit_interval, normalize_manifest_task_score
+from .scoring import clamp_open_unit_interval
 
 
 def _normalize(value: str | None) -> str:
@@ -38,8 +38,7 @@ def grade_easy_task(agent_output: Dict[str, Any], ground_truth: Dict[str, Any]) 
     if isinstance(ground_truth, dict):
         expected_fields = ground_truth.get("ground_truth") or ground_truth
 
-    score = grade_easy_submission(
+    return grade_easy_submission(
         dict(predicted_fields or {}),
         dict(expected_fields or {}),
     )
-    return normalize_manifest_task_score(score)

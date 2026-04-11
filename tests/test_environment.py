@@ -132,10 +132,8 @@ class FinanceOpsEnvironmentTests(unittest.TestCase):
         self.assertLess(reward.score, 1.0)
         self.assertGreater(reward.partial_credit, 0.0)
         self.assertLess(reward.partial_credit, 1.0)
-        self.assertGreaterEqual(info["score_snapshot"], 0.1)
-        self.assertLessEqual(info["score_snapshot"], 0.9)
-        self.assertGreater(info["raw_score_snapshot"], 0.0)
-        self.assertLess(info["raw_score_snapshot"], 1.0)
+        self.assertGreater(info["score_snapshot"], 0.0)
+        self.assertLess(info["score_snapshot"], 1.0)
         self.assertEqual(observation.task_id, "invoice_extract_easy")
 
     def test_invalid_step_rewards_also_stay_inside_open_interval(self) -> None:
@@ -151,16 +149,13 @@ class FinanceOpsEnvironmentTests(unittest.TestCase):
         self.assertGreater(reward.partial_credit, 0.0)
         self.assertLess(reward.partial_credit, 1.0)
 
-    def test_info_exposes_validator_safe_and_raw_task_scores(self) -> None:
+    def test_info_exposes_strict_task_score_bounds(self) -> None:
         env = FinanceOpsEnv()
         env.reset("easy")
 
         _, _, _, info = env.step(Action(action_type="submit"))
 
-        self.assertAlmostEqual(info["raw_score_snapshot"], 0.01, places=4)
-        self.assertGreaterEqual(info["score_snapshot"], 0.1)
-        self.assertLessEqual(info["score_snapshot"], 0.9)
-        self.assertNotIn(round(info["score_snapshot"], 1), {0.0, 1.0})
+        self.assertAlmostEqual(info["score_snapshot"], 0.01, places=4)
 
 
 if __name__ == "__main__":

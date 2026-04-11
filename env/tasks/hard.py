@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable
 
-from .scoring import clamp_open_unit_interval, normalize_manifest_task_score
+from .scoring import clamp_open_unit_interval
 
 
 def grade_hard_submission(
@@ -144,7 +144,7 @@ def grade_hard_task(agent_output: Dict[str, Any], ground_truth: Dict[str, Any]) 
         default=[],
     )
 
-    score = grade_hard_submission(
+    return grade_hard_submission(
         predicted_matches=dict(predicted_matches or {}),
         predicted_unmatched=list(predicted_unmatched or []),
         predicted_discrepancies=list(predicted_discrepancies),
@@ -154,4 +154,3 @@ def grade_hard_task(agent_output: Dict[str, Any], ground_truth: Dict[str, Any]) 
         ground_truth_discrepancies=dict(expected_discrepancies or {}),
         ground_truth_duplicates=list(expected_duplicates or []),
     )
-    return normalize_manifest_task_score(score)
