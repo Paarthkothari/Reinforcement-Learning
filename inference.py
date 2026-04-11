@@ -626,7 +626,7 @@ def run_episode(
 
             rewards.append(_safe_reward(reward.score))
             steps_taken += 1
-            score = _safe_reward(info.get("score_snapshot", 0.5))
+            score = _safe_reward(info.get("raw_score_snapshot", info.get("score_snapshot", 0.5)))
 
             log_step(
                 step=steps_taken,
@@ -658,11 +658,12 @@ def run_episode(
             except Exception:
                 fallback = _safe_reward(0.5)
             rewards.append(fallback)
+        clamped_rewards = [_safe_reward(reward_value) for reward_value in rewards]
         try:
             env.close()
         except Exception as close_error:
             print(f"[DEBUG] env.close() failed for task {task_name}: {close_error}", file=sys.stderr, flush=True)
-        log_end(success=success, steps=steps_taken, rewards=rewards)
+        log_end(success=success, steps=steps_taken, rewards=clamped_rewards)
 
 
 def main() -> None:

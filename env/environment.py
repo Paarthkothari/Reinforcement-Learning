@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 from .data import TASK_KEYS, generate_task
 from .models import Action, Observation, Reward
 from .tasks import grade_easy_submission, grade_hard_submission, grade_medium_submission
-from .tasks.scoring import clamp_open_unit_interval
+from .tasks.scoring import clamp_open_unit_interval, normalize_manifest_task_score
 
 
 class FinanceOpsEnv:
@@ -93,12 +93,14 @@ class FinanceOpsEnv:
             )
             self.last_reward = reward
 
+        raw_score_snapshot = self._raw_score_snapshot()
         return self._make_observation(), reward, self.done, {
             "task_id": self.current_task["task_id"],
             "variant_id": self.current_task.get("variant_id"),
             "difficulty": self.current_task["difficulty"],
             "step_count": self.step_count,
-            "score_snapshot": self._current_score_snapshot(),
+            "score_snapshot": normalize_manifest_task_score(raw_score_snapshot),
+            "raw_score_snapshot": raw_score_snapshot,
             "last_action_error": self.last_action_error,
         }
 
@@ -351,7 +353,8 @@ class FinanceOpsEnv:
         return self._reward(0.0, f"Incorrect match {action.invoice_id} -> {action.po_id}.", partial_credit=0.0)
 
     def _handle_submit(self) -> Reward:
-        final_score = self._current_score_snapshot()
+        raw_final_score = self._raw_score_snapshot()
+        exposed_final_score = normalize_manifest_task_score(raw_final_score)
         self.done = True
         step_penalty = 0.0 if self.current_task["type"] == "reconciliation" else min(0.25, 0.02 * max(0, self.step_count - 1))
         readiness_penalty = 0.0
@@ -365,20 +368,20 @@ class FinanceOpsEnv:
         elif self.current_task["type"] == "reconciliation":
             if len(self.matches) < len(self.current_task["ground_truth"]["matches"]):
                 readiness_penalty += 0.1
-        score = max(0.0, min(1.0, final_score - step_penalty))
+        score = max(0.0, min(1.0, raw_final_score - step_penalty))
         score = max(0.0, min(1.0, score - readiness_penalty))
         score = clamp_open_unit_interval(score)
         self.last_action_error = None
         return self._reward(
             score=round(score, 4),
             reason=(
-                f"Submitted episode with final task score {final_score:.4f}, "
+                f"Submitted episode with final task score {raw_final_score:.4f}, "
                 f"step penalty {step_penalty:.2f}, and readiness penalty {readiness_penalty:.2f}."
             ),
-            partial_credit=round(final_score, 4),
+            partial_credit=round(exposed_final_score, 4),
         )
 
-    def _current_score_snapshot(self) -> float:
+    def _raw_score_snapshot(self) -> float:
         task_type = self.current_task["type"]
         if task_type == "extraction":
             return grade_easy_submission(self.extracted_fields, self.current_task["ground_truth"])
@@ -394,6 +397,9 @@ class FinanceOpsEnv:
             self.current_task["ground_truth"].get("discrepancies", {}),
             self.current_task["ground_truth"].get("duplicate_invoices", []),
         )
+
+    def _current_score_snapshot(self) -> float:
+        return normalize_manifest_task_score(self._raw_score_snapshot())
 
     def _expected_discrepancy_issue(
         self,

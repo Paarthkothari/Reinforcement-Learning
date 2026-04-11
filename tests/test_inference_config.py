@@ -6,6 +6,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from unittest.mock import patch
 
+from env import Action
 from inference import (
     _safe_reward,
     build_client,
@@ -114,6 +115,28 @@ class InferenceConfigTests(unittest.TestCase):
         self.assertGreater(rewards[0], 0.0)
         self.assertLess(rewards[0], 1.0)
         self.assertNotIn(rewards[0], {0.0, 1.0})
+
+    def test_run_episode_uses_raw_score_snapshot_for_success_threshold(self) -> None:
+        stdout_buffer = StringIO()
+        stderr_buffer = StringIO()
+
+        with patch("inference.choose_action", return_value=Action(action_type="submit")):
+            with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
+                run_episode(
+                    task_name="invoice_extract_easy",
+                    benchmark="finance-ops-openenv",
+                    success_score_threshold=0.1,
+                    model_name="unit-test-model",
+                    client=None,
+                )
+
+        end_lines = [
+            line
+            for line in stdout_buffer.getvalue().splitlines()
+            if line.startswith("[END]")
+        ]
+        self.assertEqual(len(end_lines), 1)
+        self.assertIn("success=false", end_lines[0])
 
 
 if __name__ == "__main__":

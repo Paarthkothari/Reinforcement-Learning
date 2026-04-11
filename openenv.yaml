@@ -17,14 +17,14 @@ tasks:
     difficulty: easy
     description: "Extract five required fields from a clean SMB invoice."
     grader: "env.tasks.easy:grade_easy_task"
-    reward_range: [0.01, 0.99]
+    reward_range: [0.1, 0.9]
   - id: invoice_validate_medium
     difficulty: medium
     description: "Flag anomalies in a faulty invoice with partial credit and false-positive penalties."
     grader: "env.tasks.medium:grade_medium_task"
-    reward_range: [0.01, 0.99]
+    reward_range: [0.1, 0.9]
   - id: po_reconcile_hard
     difficulty: hard
     description: "Match invoices to purchase orders across currencies, flag unmatched and split-PO invoices, and detect amount mismatches."
     grader: "env.tasks.hard:grade_hard_task"
-    reward_range: [0.01, 0.99]
+    reward_range: [0.1, 0.9]

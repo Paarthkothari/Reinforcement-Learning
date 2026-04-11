@@ -278,7 +278,7 @@ def run_episode(
         qtable.update(state_key, action_key, updated_q)
 
         total_reward += reward.score
-        final_score = float(info.get("score_snapshot", final_score))
+        final_score = float(info.get("raw_score_snapshot", info.get("score_snapshot", final_score)))
         transitions.append(
             {
                 "state": state_key,
