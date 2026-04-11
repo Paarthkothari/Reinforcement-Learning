@@ -12,3 +12,5 @@ training_results.json
 .dockerconfig/
 AGENTS.md
 .uv-cache/
+docker_inference_sim.log
+local_validator_sim.log
