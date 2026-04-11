@@ -8,13 +8,17 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from openai import OpenAI
-from pydantic import ValidationError
 
 from env import Action, FinanceOpsEnv
 
 
+def load_hf_token() -> str | None:
+    token = os.getenv("HF_TOKEN", "").strip()
+    return token or None
+
+
 def load_api_key() -> str | None:
-    return os.getenv("API_KEY") or os.getenv("HF_TOKEN")
+    return load_hf_token()
 
 
 def get_api_base_url() -> str | None:
@@ -121,11 +125,11 @@ TASK_GUIDANCE = {
 
 def build_client() -> OpenAI:
     api_base_url = get_api_base_url()
-    api_key = load_api_key()
+    api_key = load_hf_token()
     if not api_base_url:
         raise RuntimeError("Set API_BASE_URL before running inference.py in model mode")
     if not api_key:
-        raise RuntimeError("Set API_KEY before running inference.py in model mode")
+        raise RuntimeError("Set HF_TOKEN before running inference.py in model mode")
     return OpenAI(api_key=api_key, base_url=api_base_url)
 
 
@@ -142,10 +146,10 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
     )
 
 
-def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+def log_end(success: bool, steps: int, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{_safe_reward(reward):.2f}" for reward in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={_safe_reward(score):.2f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
         flush=True,
     )
 
@@ -642,18 +646,11 @@ def run_episode(
         print(f"[DEBUG] inference error on task {task_name}: {exc}", file=sys.stderr, flush=True)
         success = False
     finally:
-        if not rewards:
-            try:
-                last_reward = getattr(env, "last_reward", None)
-                if last_reward is not None and getattr(last_reward, "score", None) is not None:
-                    fallback = _safe_reward(last_reward.score)
-                else:
-                    fallback = _safe_reward(env._current_score_snapshot())
-            except Exception:
-                fallback = _safe_reward(0.5)
-            rewards.append(fallback)
-
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+        try:
+            env.close()
+        except Exception as close_error:
+            print(f"[DEBUG] env.close() failed for task {task_name}: {close_error}", file=sys.stderr, flush=True)
+        log_end(success=success, steps=steps_taken, rewards=rewards)
 
 
 def main() -> None:
@@ -665,11 +662,7 @@ def main() -> None:
 
     client: OpenAI | None = None
     if baseline_mode == "model":
-        try:
-            client = build_client()
-        except Exception as exc:
-            print(f"[DEBUG] model mode unavailable, falling back to heuristic: {exc}", file=sys.stderr, flush=True)
-            client = None
+        client = build_client()
 
     for task_name in task_names:
         run_episode(

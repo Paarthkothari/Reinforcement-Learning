@@ -71,6 +71,7 @@ Standout mechanics already implemented:
 |-- openenv.yaml
 |-- pyproject.toml
 |-- README.md
+|-- validate_output.py
 `-- requirements.txt
 ```
 
@@ -314,10 +315,9 @@ Default config:
 
 Authentication:
 
-- primary: `API_KEY` environment variable
-- compatibility alias: `HF_TOKEN` environment variable
+- required: `HF_TOKEN` environment variable
 
-Submission runs should rely on the injected `API_BASE_URL` and `API_KEY`.
+Submission runs should rely on the injected `API_BASE_URL`, `MODEL_NAME`, and `HF_TOKEN`.
 
 ## Training Loop
 
@@ -475,7 +475,7 @@ Run the model baseline through the Hugging Face router:
 
 ```bash
 set BASELINE_MODE=model
-set API_KEY=your_hf_token
+set HF_TOKEN=your_hf_token
 set API_BASE_URL=https://router.huggingface.co/v1
 set MODEL_NAME=deepseek-ai/DeepSeek-R1:fastest
 set FINANCE_OPS_TASK=po_reconcile_hard
@@ -541,7 +541,7 @@ Verified on April 5, 2026:
 - local container health check on `http://127.0.0.1:7860/health` returns `200`
 - live Hugging Face Space endpoints `/reset`, `/health`, `/schema`, and `/web` return `200`
 - heuristic baseline mode is fully reproducible and does not require external credits
-- model mode is implemented correctly and connects through the OpenAI client using `API_BASE_URL` and `API_KEY`; heavy multi-episode training still depends on external provider quota
+- model mode is implemented correctly and connects through the OpenAI client using `API_BASE_URL` and `HF_TOKEN`; heavy multi-episode training still depends on external provider quota
 
 ## Validation
 
@@ -555,6 +555,12 @@ Current local validation result:
 
 ```text
 [OK] Reinforcement-Learning: Ready for multi-mode deployment
+```
+
+You can also validate the strict stdout contract locally:
+
+```bash
+python inference.py | python validate_output.py
 ```
 
 ## Docker
@@ -591,7 +597,7 @@ Suggested steps:
 
 1. Create a new Hugging Face Space with Docker SDK.
 2. Push this repository.
-3. Add `API_KEY` and `API_BASE_URL` as Space secrets or variables if you want model-mode inference there.
+3. Add `HF_TOKEN`, `API_BASE_URL`, and `MODEL_NAME` as Space secrets or variables if you want model-mode inference there.
 4. The app will serve on port `7860`.
 5. Use `/web` for manual debugging and the API routes for integration testing.
 
@@ -606,7 +612,7 @@ Before submitting, confirm each of these once:
 3. `docker run -p 7860:7860 financeops-openenv` starts cleanly.
 4. Your Hugging Face Space returns HTTP 200 from `/reset`.
 5. The Space also serves `/health`, `/schema`, and `/web`.
-6. `API_KEY`, `API_BASE_URL`, and `MODEL_NAME` are configured in Space secrets or variables.
+6. `HF_TOKEN`, `API_BASE_URL`, and `MODEL_NAME` are configured in Space secrets or variables.
 7. This README includes final baseline scores and the public Space URL.
 
 ### Suggested Space Tags
@@ -622,10 +628,10 @@ For discoverability in the Hugging Face UI, add these tags in Space settings:
 The hackathon runner expects these variable names to exist in your configuration:
 
 - `API_BASE_URL`
-- `API_KEY`
+- `HF_TOKEN`
 - `MODEL_NAME`
 
-This repository reads those names directly in [inference.py](./inference.py). For local heuristic runs, only `BASELINE_MODE=heuristic` is needed. For submission and model-mode runs, set `API_BASE_URL` and `API_KEY` so requests go through the provided proxy. `HF_TOKEN` is treated only as a local compatibility alias.
+This repository reads those names directly in [inference.py](./inference.py). For local heuristic runs, only `BASELINE_MODE=heuristic` is needed. For submission and model-mode runs, set `API_BASE_URL`, `HF_TOKEN`, and `MODEL_NAME` so requests go through the provided proxy.
 
 ## Security Notes
 

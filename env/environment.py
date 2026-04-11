@@ -123,6 +123,11 @@ class FinanceOpsEnv:
             "action_history": deepcopy(self.action_history),
         }
 
+    def close(self) -> None:
+        # The environment is in-memory only, but exposing close() keeps the
+        # lifecycle aligned with evaluator expectations and future resource cleanup.
+        return None
+
     def _make_observation(self) -> Observation:
         if not self.current_task:
             self.reset(self.current_task_key)

@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from inference import build_client, load_api_key, resolve_baseline_mode, resolve_task_names, _safe_reward
+from inference import build_client, load_api_key, load_hf_token, resolve_baseline_mode, resolve_task_names, _safe_reward
 
 
 class InferenceConfigTests(unittest.TestCase):
@@ -13,7 +13,7 @@ class InferenceConfigTests(unittest.TestCase):
             os.environ,
             {
                 "API_BASE_URL": "https://proxy.example/v1",
-                "API_KEY": "proxy-key",
+                "HF_TOKEN": "hf-token",
             },
             clear=False,
         ):
@@ -21,38 +21,44 @@ class InferenceConfigTests(unittest.TestCase):
                 build_client()
 
         mock_openai.assert_called_once_with(
-            api_key="proxy-key",
+            api_key="hf-token",
             base_url="https://proxy.example/v1",
         )
 
-    def test_load_api_key_prefers_api_key_over_hf_token(self) -> None:
-        with patch.dict(
-            os.environ,
-            {
-                "API_KEY": "proxy-key",
-                "HF_TOKEN": "legacy-token",
-            },
-            clear=False,
-        ):
-            self.assertEqual(load_api_key(), "proxy-key")
+    def test_load_hf_token_reads_hf_token(self) -> None:
+        with patch.dict(os.environ, {"HF_TOKEN": "hf-token"}, clear=True):
+            self.assertEqual(load_hf_token(), "hf-token")
+            self.assertEqual(load_api_key(), "hf-token")
 
     def test_resolve_baseline_mode_defaults_to_model(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(resolve_baseline_mode(), "model")
 
     def test_build_client_uses_default_api_base_url(self) -> None:
-        with patch.dict(os.environ, {"API_KEY": "proxy-key"}, clear=True):
+        with patch.dict(os.environ, {"HF_TOKEN": "hf-token"}, clear=True):
             with patch("inference.OpenAI") as mock_openai:
                 build_client()
 
         mock_openai.assert_called_once_with(
-            api_key="proxy-key",
+            api_key="hf-token",
             base_url="https://router.huggingface.co/v1",
         )
 
-    def test_build_client_requires_api_key(self) -> None:
+    def test_build_client_requires_hf_token(self) -> None:
         with patch.dict(os.environ, {"API_BASE_URL": "https://proxy.example/v1"}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "API_KEY"):
+            with self.assertRaisesRegex(RuntimeError, "HF_TOKEN"):
+                build_client()
+
+    def test_build_client_does_not_accept_api_key_only(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "API_BASE_URL": "https://proxy.example/v1",
+                "API_KEY": "legacy-token",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "HF_TOKEN"):
                 build_client()
 
     def test_resolve_task_names_defaults_to_all_three_tasks(self) -> None:
